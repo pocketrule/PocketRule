@@ -23,8 +23,8 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Install Capacitor
-        run: npm install @capacitor/core @capacitor/cli @capacitor/android
+      - name: Install missing runtime/build dependencies
+        run: npm install lucide-react @capacitor/core @capacitor/cli @capacitor/android
 
       - name: Build PocketRule
         run: npm run build
@@ -35,6 +35,22 @@ jobs:
       - name: Sync PocketRule with Android
         run: npx cap sync android
 
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Build debug APK
+        working-directory: android
+        run: chmod +x gradlew && ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketRule-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
