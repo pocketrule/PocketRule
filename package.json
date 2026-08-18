@@ -1,7 +1,7 @@
 {
   "name": "pocketrule",
   "private": true,
-  "version": "1.16.18",
+  "version": "1.16.19",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
@@ -12,11 +12,13 @@
     "@capacitor/android": "^7.4.0",
     "@capacitor/core": "^7.4.0",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "@capacitor/local-notifications": "^7.4.0"
   },
   "devDependencies": {
     "@capacitor/cli": "^7.4.0",
     "@vitejs/plugin-react": "^5.0.2",
-    "vite": "^7.1.2"
+    "vite": "^7.1.2",
+    "@capacitor/assets": "^3.0.4"
   }
 }

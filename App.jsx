@@ -1,4 +1,6 @@
 import React, { Component, useState, useEffect, useRef } from "react";
+import { Capacitor } from "@capacitor/core";
+import { LocalNotifications } from "@capacitor/local-notifications";
 import {
   ArrowRight, ArrowLeft, Check, Eye, EyeOff, Share2, BookmarkPlus, BookmarkCheck, Minus,
   Plus, Trash2, Pencil, Home as HomeIcon, LayoutGrid, Settings as SettingsIcon,
@@ -108,13 +110,29 @@ const CURRENCIES = [
 
 
 /* ---------------------------------------------------------
-   REMINDERS — V1 WEB/PWA SUPPORT
+   REMINDERS — WEB + NATIVE ANDROID
 --------------------------------------------------------- */
+const POCKETRULE_REMINDER_ID = 481516;
+const POCKETRULE_NOTIFICATION_CHANNEL = "pocketrule-reminders";
+
+function isNativeApp() {
+  try { return Capacitor.isNativePlatform(); } catch { return false; }
+}
+
 function notificationsSupported() {
+  if (isNativeApp()) return true;
   return typeof window !== "undefined" && "Notification" in window;
 }
 
 async function requestPocketRuleNotifications() {
+  if (isNativeApp()) {
+    try {
+      const current = await LocalNotifications.checkPermissions();
+      if (current.display === "granted") return "granted";
+      const requested = await LocalNotifications.requestPermissions();
+      return requested.display === "granted" ? "granted" : "denied";
+    } catch { return "denied"; }
+  }
   if (!notificationsSupported()) return "unsupported";
   if (Notification.permission === "granted") return "granted";
   try { return await Notification.requestPermission(); } catch { return "denied"; }
@@ -122,25 +140,70 @@ async function requestPocketRuleNotifications() {
 
 function reminderIsDue(reminder, now = new Date()) {
   if (!reminder || reminder.frequency === "off") return false;
-
   const hour12 = now.getHours() % 12 || 12;
   const ampm = now.getHours() >= 12 ? "PM" : "AM";
   if (Number(reminder.hour) !== hour12 || String(reminder.ampm).toUpperCase() !== ampm) return false;
-
+  if (reminder.frequency === "daily") return true;
   if (reminder.frequency === "weekly") {
     const today = now.toLocaleDateString(undefined, { weekday: "long" });
     return String(reminder.day).toLowerCase() === today.toLowerCase();
   }
-
-  if (reminder.frequency === "monthly") {
-    return Number(reminder.dayOfMonth) === now.getDate();
-  }
-
+  if (reminder.frequency === "monthly") return Number(reminder.dayOfMonth) === now.getDate();
   return false;
 }
 
+function reminder24Hour(reminder) {
+  const hour = Number(reminder?.hour) || 12;
+  return (hour % 12) + (String(reminder?.ampm).toUpperCase() === "PM" ? 12 : 0);
+}
+
+async function cancelPocketRuleReminder() {
+  if (!isNativeApp()) return;
+  try { await LocalNotifications.cancel({ notifications: [{ id: POCKETRULE_REMINDER_ID }] }); } catch {}
+}
+
+async function schedulePocketRuleReminder(reminder) {
+  if (!isNativeApp()) return { ok: false, reason: "web" };
+  if (!reminder || reminder.frequency === "off") {
+    await cancelPocketRuleReminder();
+    return { ok: true, reason: "off" };
+  }
+  if ((await requestPocketRuleNotifications()) !== "granted") return { ok: false, reason: "permission" };
+
+  try {
+    await LocalNotifications.createChannel({
+      id: POCKETRULE_NOTIFICATION_CHANNEL,
+      name: "PocketRule reminders",
+      description: "Reminders to review your PocketRule money plan.",
+      importance: 3,
+      visibility: 0,
+    });
+    await cancelPocketRuleReminder();
+
+    const schedule = { on: { hour: reminder24Hour(reminder), minute: 0 } };
+    if (reminder.frequency === "weekly") {
+      const weekday = { Sunday:1, Monday:2, Tuesday:3, Wednesday:4, Thursday:5, Friday:6, Saturday:7 };
+      schedule.on.weekday = weekday[String(reminder.day)] || 1;
+    } else if (reminder.frequency === "monthly") {
+      schedule.on.day = Math.min(31, Math.max(1, Number(reminder.dayOfMonth) || 1));
+    }
+
+    await LocalNotifications.schedule({
+      notifications: [{
+        id: POCKETRULE_REMINDER_ID,
+        title: "PocketRule reminder",
+        body: "Check your plan and see what you have left.",
+        channelId: POCKETRULE_NOTIFICATION_CHANNEL,
+        schedule,
+        autoCancel: true,
+      }],
+    });
+    return { ok: true, reason: "scheduled" };
+  } catch { return { ok: false, reason: "schedule-failed" }; }
+}
+
 function firePocketRuleReminder() {
-  if (!notificationsSupported() || Notification.permission !== "granted") return;
+  if (!notificationsSupported() || isNativeApp() || Notification.permission !== "granted") return;
   try {
     new Notification("PocketRule reminder", {
       body: "Check your plan and see what you have left.",
@@ -149,7 +212,7 @@ function firePocketRuleReminder() {
   } catch {}
 }
 
-const APP_VERSION = "1.16.18";
+const APP_VERSION = "1.16.19";
 const STORAGE_KEY = "pocketrule-state-v1";
 const ENCRYPTED_STORAGE_KEY = "pocketrule-state-v1-encrypted";
 const SECURITY_META_KEY = "pocketrule-security-meta-v1";
@@ -2947,14 +3010,26 @@ function SettingsScreen({ settings, onChange, onPinCreated, onLockNow, onReset, 
             <div style={{ padding: 14, borderBottom: `1px solid ${LINE}` }}>
               <ReminderPicker
                 reminder={{ frequency: settings.reminderFrequency, day: settings.reminderDay, dayOfMonth: settings.reminderDayOfMonth, hour: settings.reminderHour, ampm: settings.reminderAmpm }}
-                setReminder={(next) => onChange({
-                  ...settings,
-                  reminderFrequency: next.frequency,
-                  reminderDay: next.day,
-                  reminderDayOfMonth: next.dayOfMonth,
-                  reminderHour: next.hour,
-                  reminderAmpm: next.ampm,
-                })}
+                setReminder={async (next) => {
+                  const nextSettings = {
+                    ...settings,
+                    reminderFrequency: next.frequency,
+                    reminderDay: next.day,
+                    reminderDayOfMonth: next.dayOfMonth,
+                    reminderHour: next.hour,
+                    reminderAmpm: next.ampm,
+                  };
+                  onChange(nextSettings);
+                  if (isNativeApp() && settings.notificationsEnabled) {
+                    await schedulePocketRuleReminder({
+                      frequency: next.frequency,
+                      day: next.day,
+                      dayOfMonth: next.dayOfMonth,
+                      hour: next.hour,
+                      ampm: next.ampm,
+                    });
+                  }
+                }}
               />
             </div>
             <div style={{ padding: 14, borderBottom: `1px solid ${LINE}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -2967,11 +3042,19 @@ function SettingsScreen({ settings, onChange, onPinCreated, onLockNow, onReset, 
                 onToggle={async () => {
                   if (settings.notificationsEnabled) {
                     onChange({ ...settings, notificationsEnabled: false });
+                    await cancelPocketRuleReminder();
                     return;
                   }
                   const permission = await requestPocketRuleNotifications();
                   if (permission === "granted") {
                     onChange({ ...settings, notificationsEnabled: true });
+                    await schedulePocketRuleReminder({
+                      frequency: settings.reminderFrequency,
+                      day: settings.reminderDay,
+                      dayOfMonth: settings.reminderDayOfMonth,
+                      hour: settings.reminderHour,
+                      ampm: settings.reminderAmpm,
+                    });
                   }
                 }}
               />
@@ -3914,26 +3997,28 @@ function PocketRuleAppInner() {
   const [, forceThemeRecheck] = useState(0);
 
   useEffect(() => {
+    const reminder = {
+      frequency: data.settings.reminderFrequency,
+      day: data.settings.reminderDay,
+      dayOfMonth: data.settings.reminderDayOfMonth,
+      hour: data.settings.reminderHour,
+      ampm: data.settings.reminderAmpm,
+    };
+
+    if (isNativeApp()) {
+      schedulePocketRuleReminder(data.settings.notificationsEnabled ? reminder : { frequency: "off" });
+      return undefined;
+    }
+
+    if (!data.settings.notificationsEnabled) return undefined;
     let lastMinute = "";
     const checkReminder = () => {
-      if (!data.settings.notificationsEnabled) return;
-
       const now = new Date();
       const minuteKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}-${now.getMinutes()}`;
       if (minuteKey === lastMinute) return;
       lastMinute = minuteKey;
-
-      if (reminderIsDue({
-        frequency: data.settings.reminderFrequency,
-        day: data.settings.reminderDay,
-        dayOfMonth: data.settings.reminderDayOfMonth,
-        hour: data.settings.reminderHour,
-        ampm: data.settings.reminderAmpm,
-      }, now)) {
-        firePocketRuleReminder();
-      }
+      if (reminderIsDue(reminder, now)) firePocketRuleReminder();
     };
-
     checkReminder();
     const timer = window.setInterval(checkReminder, 30000);
     return () => window.clearInterval(timer);
@@ -4372,6 +4457,8 @@ function PocketRuleAppInner() {
         notificationsEnabled,
       },
     }));
+    if (notificationsEnabled) await schedulePocketRuleReminder(obReminder);
+    else await cancelPocketRuleReminder();
     setScreen("home");
   }
 
