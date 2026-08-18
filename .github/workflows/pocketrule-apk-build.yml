@@ -20,10 +20,15 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Install required packages
-        run: npm install lucide-react @capacitor/core @capacitor/cli @capacitor/android @capacitor/assets
+      - name: Install Capacitor packages
+        run: |
+          npm install @capacitor/core@7.4.0
+          npm install @capacitor/android@7.4.0
+          npm install @capacitor/local-notifications@7.0.7
+          npm install @capacitor/cli@7.4.0
+          npm install @capacitor/assets@3.0.4
 
-      - name: Build PocketRule web app
+      - name: Build PocketRule
         run: npm run build
 
       - name: Add Android platform
@@ -32,9 +37,53 @@ jobs:
       - name: Generate Android app icon
         run: npx @capacitor/assets generate --android
 
+      - name: Add Android notification permissions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text()
+
+          marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+
+          permissions = [
+              '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
+              '    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />'
+          ]
+
+          for permission in permissions:
+              if permission not in text:
+                  text = text.replace(marker, marker + "\n" + permission)
+
+          manifest.write_text(text)
+          PY
+
       - name: Sync Android
         run: npx cap sync android
 
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Build debug APK
+        working-directory: android
+        run: chmod +x gradlew && ./gradlew assembleDebug
+
+      - name: Verify APK
+        run: |
+          test -f android/app/build/outputs/apk/debug/app-debug.apk
+          echo "APK successfully created."
+
+      - name: Upload PocketRule APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketRule-APK-${{ github.run_id }}
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
