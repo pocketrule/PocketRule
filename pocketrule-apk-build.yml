@@ -1,0 +1,53 @@
+name: PocketRule APK - Clean Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build and Upload PocketRule APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PocketRule
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install required packages
+        run: npm install lucide-react @capacitor/core @capacitor/cli @capacitor/android
+
+      - name: Build PocketRule web app
+        run: npm run build
+
+      - name: Add Android platform
+        run: npx cap add android
+
+      - name: Sync Android
+        run: npx cap sync android
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Build debug APK
+        working-directory: android
+        run: chmod +x gradlew && ./gradlew assembleDebug
+
+      - name: Verify APK
+        run: test -f android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload PocketRule APK
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: PocketRule-APK-${{ github.run_id }}
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
