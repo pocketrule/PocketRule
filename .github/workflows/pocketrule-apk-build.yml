@@ -34,6 +34,11 @@ jobs:
       - name: Add Android platform
         run: npx cap add android
 
+      - name: Generate Android app icon
+        run: |
+          npm install --save-dev @capacitor/assets
+          npx @capacitor/assets generate --android
+
       - name: Add Android notification permissions
         run: |
           python3 - <<'PY'
