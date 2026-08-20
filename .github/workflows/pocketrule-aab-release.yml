@@ -30,7 +30,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: false
 
       # --------------------------------------------------
       # 3. Install dependencies
@@ -291,7 +290,6 @@ jobs:
               flags=re.DOTALL
           )
 
-          # Add explicit PKCS12 signing configuration.
           signing_config = '''
               signingConfigs {
                   release {
@@ -315,32 +313,56 @@ jobs:
               1
           )
 
-          # Set PocketRule version.
+          # ------------------------------------------------
+          # PocketRule version
+          # ------------------------------------------------
+
           version_code = "11706"
           version_name = "1.17.6"
 
-          text = re.sub(
-              r"versionCode\s+\d+",
-              f"versionCode {version_code}",
-              text,
-              count=1
-          )
+          if re.search(r"versionCode\s+\d+", text):
+              text = re.sub(
+                  r"versionCode\s+\d+",
+                  f"versionCode {version_code}",
+                  text,
+                  count=1
+              )
+          else:
+              raise SystemExit(
+                  "Could not find versionCode in build.gradle."
+              )
 
-          text = re.sub(
+          if re.search(
               r'versionName\s+["\'][^"\']+["\']',
-              f'versionName "{version_name}"',
-              text,
-              count=1
-          )
+              text
+          ):
+              text = re.sub(
+                  r'versionName\s+["\'][^"\']+["\']',
+                  f'versionName "{version_name}"',
+                  text,
+                  count=1
+              )
+          else:
+              raise SystemExit(
+                  "Could not find versionName in build.gradle."
+              )
 
-          # Attach signing configuration to release.
-          release_pattern = r'(buildTypes\s*\{\s*release\s*\{)'
+          # ------------------------------------------------
+          # Attach signing configuration to release build
+          # ------------------------------------------------
+
+          release_pattern = (
+              r'(buildTypes\s*\{\s*release\s*\{)'
+          )
 
           if not re.search(
               r'signingConfig\s+signingConfigs\.release',
               text
           ):
-              if not re.search(release_pattern, text):
+              if not re.search(
+                  release_pattern,
+                  text
+              ):
                   raise SystemExit(
                       "Could not find release build type."
                   )
@@ -354,7 +376,9 @@ jobs:
 
           path.write_text(text)
 
-          print("Android PKCS12 release signing configured.")
+          print(
+              "Android PKCS12 release signing configured."
+          )
           PY
 
       # --------------------------------------------------
