@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout PocketRule
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -27,11 +29,14 @@ jobs:
       - name: Install Capacitor packages
         run: |
           npm install \
-            @capacitor/core@7.6.0 \
-            @capacitor/android@7.6.0 \
+            @capacitor/core@7.6.8 \
+            @capacitor/android@7.6.8 \
             @capacitor/local-notifications@7.0.7 \
-            @capacitor/cli@7.6.0 \
-            lucide-react
+            @capacitor/cli@7.6.8 \
+            lucide-react@0.468.0
+
+      - name: Security audit
+        run: npm audit --audit-level=high
 
       - name: Build PocketRule
         run: npm run build
@@ -39,12 +44,12 @@ jobs:
       - name: Add Android platform
         run: npx cap add android
 
-      - name: Generate Android app icon
+      - name: Generate Android assets
         run: |
           npm install --save-dev @capacitor/assets
           npx @capacitor/assets generate --android
 
-      - name: Add Android notification permissions
+      - name: Add Android notification permission
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -54,23 +59,19 @@ jobs:
 
           marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
 
-          permissions = [
-              '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
-              '<uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />'
-          ]
+          permission = '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />'
 
-          for permission in permissions:
-              if permission not in text:
-                  text = text.replace(
-                      marker,
-                      marker + "\n    " + permission,
-                      1
-                  )
+          if permission not in text:
+              text = text.replace(
+                  marker,
+                  marker + "\n    " + permission,
+                  1
+              )
 
           manifest.write_text(text)
           PY
 
-      - name: Sync Android
+      - name: Sync Capacitor
         run: npx cap sync android
 
       - name: Setup Java
@@ -79,6 +80,153 @@ jobs:
           distribution: temurin
           java-version: 21
 
+      - name: Validate signing secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64" || {
+            echo "Missing ANDROID_KEYSTORE_BASE64 secret"
+            exit 1
+          }
+
+          test -n "$KEYSTORE_PASSWORD" || {
+            echo "Missing KEYSTORE_PASSWORD secret"
+            exit 1
+          }
+
+          test -n "$KEY_ALIAS" || {
+            echo "Missing KEY_ALIAS secret"
+            exit 1
+          }
+
+          test -n "$KEY_PASSWORD" || {
+            echo "Missing KEY_PASSWORD secret"
+            exit 1
+          }
+
+      - name: Decode upload keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
+
+          test -s android/upload-keystore.jks || {
+            echo "Keystore could not be decoded."
+            exit 1
+          }
+
+      - name: Configure Android release signing
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("android/app/build.gradle")
+          text = path.read_text()
+
+          # Remove any previous generated signing configuration.
+          text = re.sub(
+              r'\n\s*signingConfigs\s*\{.*?\n\s*\}',
+              '',
+              text,
+              flags=re.DOTALL
+          )
+
+          # Add clean release signing configuration.
+          signing_config = """
+    signingConfigs {
+        release {
+            storeFile file("../upload-keystore.jks")
+            storePassword System.getenv("KEYSTORE_PASSWORD")
+            keyAlias System.getenv("KEY_ALIAS")
+            keyPassword System.getenv("KEY_PASSWORD")
+        }
+    }
+"""
+
+          text = text.replace(
+              "android {",
+              "android {" + signing_config,
+              1
+          )
+
+          # Set version.
+          text = re.sub(
+              r'versionCode\s+\d+',
+              'versionCode 11706',
+              text,
+              count=1
+          )
+
+          text = re.sub(
+              r'versionName\s+["\'][^"\']+["\']',
+              'versionName "1.17.6"',
+              text,
+              count=1
+          )
+
+          # Attach signing configuration to release build.
+          release_pattern = r'(buildTypes\s*\{\s*release\s*\{)'
+
+          if not re.search(
+              r'signingConfig\s+signingConfigs\.release',
+              text
+          ):
+              text = re.sub(
+                  release_pattern,
+                  r'\1\n            signingConfig signingConfigs.release',
+                  text,
+                  count=1
+              )
+
+          path.write_text(text)
+
+          print("Release signing configuration prepared.")
+          PY
+
+      - name: Build signed release AAB
+        working-directory: android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+
+          ./gradlew clean
+
+          ./gradlew bundleRelease
+
+      - name: Verify AAB
+        run: |
+          AAB="android/app/build/outputs/bundle/release/app-release.aab"
+
+          if [ ! -f "$AAB" ]; then
+            echo "ERROR: Release AAB was not created."
+            exit 1
+          fi
+
+          echo "========================================"
+          echo "PocketRule AAB successfully created"
+          echo "========================================"
+
+          ls -lh "$AAB"
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketRule-AAB-1.17.6-${{ github.run_number }}
+          path: android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Cleanup signing material
+        if: always()
+        run: |
+          rm -f android/upload-keystore.jks
       - name: Validate signing secrets
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
