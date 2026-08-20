@@ -13,37 +13,46 @@ jobs:
 
     steps:
 
-      # ==================================================
+      # ============================================================
       # 1. CHECKOUT
-      # ==================================================
+      # ============================================================
 
       - name: Checkout PocketRule
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 
 
-      # ==================================================
+      # ============================================================
       # 2. SETUP NODE
-      # ==================================================
+      # ============================================================
+
+      # IMPORTANT:
+      # No npm cache is enabled because the repository does not
+      # currently have a package-lock.json.
+      #
+      # This prevents the previous:
+      # "Dependencies lock file is not found"
+      # error.
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
+          package-manager-cache: false
 
 
-      # ==================================================
+      # ============================================================
       # 3. INSTALL PROJECT DEPENDENCIES
-      # ==================================================
+      # ============================================================
 
       - name: Install dependencies
         run: npm install
 
 
-      # ==================================================
+      # ============================================================
       # 4. INSTALL CAPACITOR PACKAGES
-      # ==================================================
+      # ============================================================
 
       - name: Install Capacitor packages
         run: |
@@ -55,36 +64,41 @@ jobs:
             lucide-react@0.468.0
 
 
-      # ==================================================
+      # ============================================================
       # 5. SECURITY AUDIT
-      # ==================================================
-      # Do not stop the production build because of
-      # development dependency vulnerabilities.
+      # ============================================================
+      #
+      # The audit must NOT prevent the production build.
+      #
+      # The previous audit found vulnerabilities in development
+      # dependencies such as @capacitor/assets / sharp.
+      #
+      # We record the audit but allow the build to continue.
 
       - name: Security audit
         continue-on-error: true
         run: npm audit --audit-level=high
 
 
-      # ==================================================
-      # 6. BUILD WEB APP
-      # ==================================================
+      # ============================================================
+      # 6. BUILD POCKETRULE WEB APP
+      # ============================================================
 
       - name: Build PocketRule
         run: npm run build
 
 
-      # ==================================================
+      # ============================================================
       # 7. ADD ANDROID PLATFORM
-      # ==================================================
+      # ============================================================
 
       - name: Add Android platform
         run: npx cap add android
 
 
-      # ==================================================
+      # ============================================================
       # 8. GENERATE ANDROID ASSETS
-      # ==================================================
+      # ============================================================
 
       - name: Generate Android assets
         run: |
@@ -92,9 +106,9 @@ jobs:
           npx @capacitor/assets generate --android
 
 
-      # ==================================================
-      # 9. ADD NOTIFICATION PERMISSION
-      # ==================================================
+      # ============================================================
+      # 9. ADD ANDROID NOTIFICATION PERMISSION
+      # ============================================================
 
       - name: Add Android notification permission
         run: |
@@ -107,15 +121,10 @@ jobs:
 
           if not manifest.exists():
               raise SystemExit(
-                  "AndroidManifest.xml was not found."
+                  "ERROR: AndroidManifest.xml was not found."
               )
 
           text = manifest.read_text()
-
-          marker = (
-              '<manifest '
-              'xmlns:android="http://schemas.android.com/apk/res/android">'
-          )
 
           permission = (
               '<uses-permission '
@@ -123,9 +132,11 @@ jobs:
           )
 
           if permission not in text:
+              marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+
               if marker not in text:
                   raise SystemExit(
-                      "Could not find Android manifest root."
+                      "ERROR: Could not find Android manifest root."
                   )
 
               text = text.replace(
@@ -140,28 +151,28 @@ jobs:
           PY
 
 
-      # ==================================================
+      # ============================================================
       # 10. SYNC CAPACITOR
-      # ==================================================
+      # ============================================================
 
       - name: Sync Capacitor
         run: npx cap sync android
 
 
-      # ==================================================
+      # ============================================================
       # 11. SETUP JAVA 21
-      # ==================================================
+      # ============================================================
 
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 21
+          java-version: "21"
 
 
-      # ==================================================
+      # ============================================================
       # 12. VALIDATE SIGNING SECRETS
-      # ==================================================
+      # ============================================================
 
       - name: Validate signing secrets
         env:
@@ -173,31 +184,31 @@ jobs:
           set -euo pipefail
 
           test -n "$ANDROID_KEYSTORE_BASE64" || {
-            echo "ERROR: Missing ANDROID_KEYSTORE_BASE64 secret"
+            echo "ERROR: ANDROID_KEYSTORE_BASE64 is missing."
             exit 1
           }
 
           test -n "$KEYSTORE_PASSWORD" || {
-            echo "ERROR: Missing KEYSTORE_PASSWORD secret"
+            echo "ERROR: KEYSTORE_PASSWORD is missing."
             exit 1
           }
 
           test -n "$KEY_ALIAS" || {
-            echo "ERROR: Missing KEY_ALIAS secret"
+            echo "ERROR: KEY_ALIAS is missing."
             exit 1
           }
 
           test -n "$KEY_PASSWORD" || {
-            echo "ERROR: Missing KEY_PASSWORD secret"
+            echo "ERROR: KEY_PASSWORD is missing."
             exit 1
           }
 
-          echo "All signing secrets are present."
+          echo "All four signing secrets are present."
 
 
-      # ==================================================
+      # ============================================================
       # 13. DECODE ORIGINAL KEYSTORE
-      # ==================================================
+      # ============================================================
 
       - name: Decode upload keystore
         env:
@@ -209,7 +220,7 @@ jobs:
             | base64 --decode > android/upload-keystore-original
 
           test -s android/upload-keystore-original || {
-            echo "ERROR: Original keystore could not be decoded."
+            echo "ERROR: Keystore decoding failed."
             exit 1
           }
 
@@ -218,30 +229,9 @@ jobs:
           echo "Original keystore decoded successfully."
 
 
-      # ==================================================
-      # 14. VERIFY ORIGINAL KEYSTORE
-      # ==================================================
-
-      - name: Verify original keystore
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-        run: |
-          set -euo pipefail
-
-          keytool \
-            -list \
-            -keystore android/upload-keystore-original \
-            -storepass "$KEYSTORE_PASSWORD" \
-            > /tmp/original-keystore.txt
-
-          echo "Original keystore verified successfully."
-
-          cat /tmp/original-keystore.txt
-
-
-      # ==================================================
-      # 15. DETECT KEYSTORE TYPE
-      # ==================================================
+      # ============================================================
+      # 14. DETECT KEYSTORE TYPE
+      # ============================================================
 
       - name: Detect keystore type
         env:
@@ -258,8 +248,8 @@ jobs:
               -storepass "$KEYSTORE_PASSWORD" \
               > /tmp/pkcs12-test.txt 2>&1; then
 
-            echo "Using keystore type: PKCS12"
             echo "KEYSTORE_TYPE=PKCS12" >> "$GITHUB_ENV"
+            echo "Detected keystore type: PKCS12"
 
           elif keytool \
               -list \
@@ -268,20 +258,60 @@ jobs:
               -storepass "$KEYSTORE_PASSWORD" \
               > /tmp/jks-test.txt 2>&1; then
 
-            echo "Using keystore type: JKS"
             echo "KEYSTORE_TYPE=JKS" >> "$GITHUB_ENV"
+            echo "Detected keystore type: JKS"
 
           else
-            echo "ERROR: Could not determine keystore type."
+            echo "ERROR: Could not identify the keystore type."
+            echo ""
+            echo "PKCS12 test:"
+            cat /tmp/pkcs12-test.txt || true
+            echo ""
+            echo "JKS test:"
+            cat /tmp/jks-test.txt || true
             exit 1
           fi
 
 
-      # ==================================================
-      # 16. VERIFY ORIGINAL PRIVATE KEY PASSWORD
-      # ==================================================
+      # ============================================================
+      # 15. VERIFY ORIGINAL KEYSTORE + ALIAS
+      # ============================================================
 
-      - name: Verify original private key password
+      - name: Verify original keystore
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+
+          echo "Checking original keystore..."
+
+          keytool \
+            -list \
+            -v \
+            -storetype "$KEYSTORE_TYPE" \
+            -keystore android/upload-keystore-original \
+            -storepass "$KEYSTORE_PASSWORD" \
+            > /tmp/original-keystore.txt
+
+          echo "Checking requested alias..."
+
+          if ! grep -Fq "Alias name: $KEY_ALIAS" /tmp/original-keystore.txt; then
+            echo "ERROR: KEY_ALIAS was not found in the keystore."
+            echo ""
+            echo "Available aliases:"
+            grep "Alias name:" /tmp/original-keystore.txt || true
+            exit 1
+          fi
+
+          echo "Keystore and alias verified."
+
+
+      # ============================================================
+      # 16. VERIFY ORIGINAL PRIVATE KEY
+      # ============================================================
+
+      - name: Verify original private key
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
@@ -289,7 +319,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Testing original private key password..."
+          echo "Testing private key..."
 
           keytool \
             -certreq \
@@ -298,56 +328,39 @@ jobs:
             -storetype "$KEYSTORE_TYPE" \
             -storepass "$KEYSTORE_PASSWORD" \
             -keypass "$KEY_PASSWORD" \
-            -file /tmp/original-test.csr \
-            > /tmp/private-key-test.txt 2>&1
+            -file /tmp/private-key-test.csr
 
-          rm -f /tmp/original-test.csr
+          rm -f /tmp/private-key-test.csr
 
-          echo "Original private key password is valid."
-
-
-      # ==================================================
-      # 17. CONVERT KEYSTORE TO JKS
-      # ==================================================
-
-      - name: Convert keystore to JKS
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-
-          echo "Converting keystore to JKS..."
-
-          rm -f android/upload-keystore.jks
-
-          keytool \
-            -importkeystore \
-            -srckeystore android/upload-keystore-original \
-            -srcstoretype "$KEYSTORE_TYPE" \
-            -srcstorepass "$KEYSTORE_PASSWORD" \
-            -srckeypass "$KEY_PASSWORD" \
-            -destkeystore android/upload-keystore.jks \
-            -deststoretype JKS \
-            -deststorepass "$KEYSTORE_PASSWORD" \
-            -destkeypass "$KEY_PASSWORD" \
-            -noprompt
-
-          test -s android/upload-keystore.jks || {
-            echo "ERROR: JKS conversion failed."
-            exit 1
-          }
-
-          chmod 600 android/upload-keystore.jks
-
-          echo "JKS conversion completed successfully."
+          echo "Private key verified successfully."
 
 
-      # ==================================================
-      # 18. VERIFY CONVERTED JKS
-      # ==================================================
+      # ============================================================
+      # 17. CONVERT PKCS12 TO JKS
+      # ============================================================
+      #
+      # THIS IS THE IMPORTANT FIX.
+      #
+      # The previous workflow used:
+      #
+      #   -srckeypass
+      #
+      # without explicitly specifying:
+      #
+      #   -srcalias
+      #
+      # That caused:
+      #
+      # "if alias not specified, destalias and srckeypass
+      #  must not be specified"
+      #
+      # Also, PKCS12 does not support separate store/key
+      # passwords in the same way JKS does.
+      #
+      # We therefore explicitly specify the source alias and
+      # create a JKS file for Android signing.
 
-      - name: Verify converted JKS
+      - name: Prepare JKS signing keystore
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
@@ -355,7 +368,59 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Verifying converted JKS..."
+          rm -f android/upload-keystore.jks
+
+          if [ "$KEYSTORE_TYPE" = "JKS" ]; then
+
+            echo "Original keystore is already JKS."
+
+            cp \
+              android/upload-keystore-original \
+              android/upload-keystore.jks
+
+          else
+
+            echo "Original keystore is PKCS12."
+            echo "Converting PKCS12 to JKS..."
+
+            keytool \
+              -importkeystore \
+              -srckeystore android/upload-keystore-original \
+              -srcstoretype PKCS12 \
+              -srcstorepass "$KEYSTORE_PASSWORD" \
+              -srcalias "$KEY_ALIAS" \
+              -destkeystore android/upload-keystore.jks \
+              -deststoretype JKS \
+              -deststorepass "$KEYSTORE_PASSWORD" \
+              -destkeypass "$KEY_PASSWORD" \
+              -destalias "$KEY_ALIAS" \
+              -noprompt
+
+          fi
+
+          test -s android/upload-keystore.jks || {
+            echo "ERROR: JKS keystore was not created."
+            exit 1
+          }
+
+          chmod 600 android/upload-keystore.jks
+
+          echo "JKS signing keystore prepared."
+
+
+      # ============================================================
+      # 18. VERIFY JKS
+      # ============================================================
+
+      - name: Verify JKS signing keystore
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+
+          echo "Verifying JKS..."
 
           keytool \
             -list \
@@ -363,12 +428,15 @@ jobs:
             -storetype JKS \
             -keystore android/upload-keystore.jks \
             -storepass "$KEYSTORE_PASSWORD" \
-            > /tmp/jks-list.txt
+            > /tmp/jks-info.txt
 
-          echo "JKS contents:"
-          grep -E "Alias name:|Entry type:" /tmp/jks-list.txt || true
+          if ! grep -Fq "Alias name: $KEY_ALIAS" /tmp/jks-info.txt; then
+            echo "ERROR: Alias was not found in converted JKS."
+            grep "Alias name:" /tmp/jks-info.txt || true
+            exit 1
+          fi
 
-          echo "Testing converted private key..."
+          echo "Testing JKS private key..."
 
           keytool \
             -certreq \
@@ -377,24 +445,20 @@ jobs:
             -storetype JKS \
             -storepass "$KEYSTORE_PASSWORD" \
             -keypass "$KEY_PASSWORD" \
-            -file /tmp/converted-test.csr
+            -file /tmp/jks-private-key-test.csr
 
-          rm -f /tmp/converted-test.csr
+          rm -f /tmp/jks-private-key-test.csr
 
-          echo "========================================"
-          echo "Converted JKS private key verified."
-          echo "========================================"
+          echo "============================================"
+          echo "JKS AND PRIVATE KEY VERIFIED SUCCESSFULLY"
+          echo "============================================"
 
 
-      # ==================================================
+      # ============================================================
       # 19. CONFIGURE ANDROID RELEASE SIGNING
-      # ==================================================
+      # ============================================================
 
       - name: Configure Android release signing
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -404,20 +468,15 @@ jobs:
 
           if not path.exists():
               raise SystemExit(
-                  "android/app/build.gradle was not found."
+                  "ERROR: android/app/build.gradle was not found."
               )
 
           text = path.read_text()
 
-          # Remove previously generated signingConfigs.
-          text = re.sub(
-              r'\n\s*signingConfigs\s*\{.*?\n\s*\}',
-              '',
-              text,
-              flags=re.DOTALL
-          )
+          # --------------------------------------------------------
+          # Add signing configuration inside android {}
+          # --------------------------------------------------------
 
-          # Clean release signing configuration.
           signing_config = """
               signingConfigs {
                   release {
@@ -430,9 +489,15 @@ jobs:
               }
           """
 
+          if "signingConfigs {" in text:
+              raise SystemExit(
+                  "ERROR: A signingConfigs block already exists. "
+                  "Do not run with a manually inserted signing block."
+              )
+
           if "android {" not in text:
               raise SystemExit(
-                  "Could not find android block in build.gradle."
+                  "ERROR: Could not find android {} block."
               )
 
           text = text.replace(
@@ -441,9 +506,9 @@ jobs:
               1
           )
 
-          # ------------------------------------------------
+          # --------------------------------------------------------
           # PocketRule version
-          # ------------------------------------------------
+          # --------------------------------------------------------
 
           version_code = "11706"
           version_name = "1.17.6"
@@ -457,7 +522,7 @@ jobs:
               )
           else:
               raise SystemExit(
-                  "Could not find versionCode in build.gradle."
+                  "ERROR: versionCode was not found."
               )
 
           if re.search(
@@ -472,16 +537,14 @@ jobs:
               )
           else:
               raise SystemExit(
-                  "Could not find versionName in build.gradle."
+                  "ERROR: versionName was not found."
               )
 
-          # ------------------------------------------------
-          # Attach signing configuration to release build
-          # ------------------------------------------------
+          # --------------------------------------------------------
+          # Attach signing configuration to release
+          # --------------------------------------------------------
 
-          release_pattern = (
-              r'(buildTypes\s*\{\s*release\s*\{)'
-          )
+          release_pattern = r'(buildTypes\s*\{\s*release\s*\{)'
 
           if not re.search(
               r'signingConfig\s+signingConfigs\.release',
@@ -492,7 +555,7 @@ jobs:
                   text
               ):
                   raise SystemExit(
-                      "Could not find release build type."
+                      "ERROR: release build type was not found."
                   )
 
               text = re.sub(
@@ -504,11 +567,106 @@ jobs:
 
           path.write_text(text)
 
-          print(
-              "Android release signing configured successfully."
-          )
+          print("Android release signing configured.")
           PY
 
 
-      # ==================================================
-      # 
+      # ============================================================
+      # 20. SHOW FINAL SIGNING CONFIGURATION
+      # ============================================================
+
+      - name: Verify Android signing configuration
+        run: |
+          set -euo pipefail
+
+          echo "Checking Android signing configuration..."
+
+          grep -n \
+            -A12 \
+            -B2 \
+            "signingConfigs" \
+            android/app/build.gradle || true
+
+          echo ""
+          echo "Checking release signing..."
+
+          grep -n \
+            "signingConfig signingConfigs.release" \
+            android/app/build.gradle
+
+
+      # ============================================================
+      # 21. BUILD SIGNED PRODUCTION AAB
+      # ============================================================
+
+      - name: Build signed release AAB
+        working-directory: android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          chmod +x gradlew
+
+          echo "Cleaning previous Android build..."
+
+          ./gradlew clean --no-daemon
+
+          echo "Building signed PocketRule AAB..."
+
+          ./gradlew bundleRelease --no-daemon
+
+
+      # ============================================================
+      # 22. VERIFY AAB EXISTS
+      # ============================================================
+
+      - name: Verify AAB
+        run: |
+          set -euo pipefail
+
+          AAB="android/app/build/outputs/bundle/release/app-release.aab"
+
+          if [ ! -f "$AAB" ]; then
+            echo "ERROR: Release AAB was not created."
+            exit 1
+          fi
+
+          if [ ! -s "$AAB" ]; then
+            echo "ERROR: Release AAB is empty."
+            exit 1
+          fi
+
+          echo "============================================"
+          echo "POCKETRULE AAB SUCCESSFULLY CREATED"
+          echo "============================================"
+
+          ls -lh "$AAB"
+
+
+      # ============================================================
+      # 23. VERIFY AAB SIGNATURE
+      # ============================================================
+
+      - name: Verify AAB signing
+        run: |
+          set -euo pipefail
+
+          AAB="android/app/build/outputs/bundle/release/app-release.aab"
+
+          jarsigner \
+            -verify \
+            -verbose \
+            "$AAB" \
+            > /tmp/jarsigner-output.txt 2>&1
+
+          cat /tmp/jarsigner-output.txt
+
+          echo "============================================"
+          echo "AAB SIGNATURE VERIFIED"
+          echo "============================================"
+
+
+      # =====================================================
