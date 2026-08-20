@@ -34,21 +34,23 @@ jobs:
       # --------------------------------------------------
       # 3. Install project dependencies
       #
-      # IMPORTANT:
-      # No npm cache is used because this repository
-      # currently does not contain a package-lock.json.
-      # npm install therefore replaces npm ci.
+      # No npm cache is used because the repository does
+      # not currently contain a package-lock.json.
       # --------------------------------------------------
 
       - name: Install dependencies
-        run: npm install
+        run: |
+          set -euo pipefail
+          npm install
 
       # --------------------------------------------------
-      # 4. Install exact required Capacitor packages
+      # 4. Install required Capacitor packages
       # --------------------------------------------------
 
       - name: Install Capacitor packages
         run: |
+          set -euo pipefail
+
           npm install \
             @capacitor/core@7.6.8 \
             @capacitor/android@7.6.8 \
@@ -57,37 +59,101 @@ jobs:
             lucide-react@0.468.0
 
       # --------------------------------------------------
-      # 5. Security audit
+      # 5. Install Capacitor Assets
+      #
+      # The previous audit found vulnerable sharp
+      # versions through @capacitor/assets.
+      # --------------------------------------------------
+
+      - name: Install Capacitor assets
+        run: |
+          set -euo pipefail
+
+          npm install --save-dev @capacitor/assets@3.0.5
+
+      # --------------------------------------------------
+      # 6. Remediate vulnerable build dependencies
+      # --------------------------------------------------
+
+      - name: Update vulnerable build dependencies
+        run: |
+          set -euo pipefail
+
+          # sharp 0.35.0+ contains the patched libvips
+          # dependency. Pin to the current 0.35 release.
+          npm install --save-dev sharp@0.35.3
+
+          # tar <= 7.5.20 is vulnerable.
+          # 7.5.22 is currently outside the affected range.
+          npm install --save-dev tar@7.5.22
+
+      # --------------------------------------------------
+      # 7. Verify resolved security-sensitive versions
+      # --------------------------------------------------
+
+      - name: Verify dependency versions
+        run: |
+          set -euo pipefail
+
+          echo "Resolved sharp:"
+          npm ls sharp --all || true
+
+          echo "Resolved tar:"
+          npm ls tar --all || true
+
+          echo "Checking for vulnerable sharp versions..."
+
+          if npm ls sharp@0.34 --all 2>/dev/null; then
+            echo "ERROR: Vulnerable sharp 0.34.x detected."
+            exit 1
+          fi
+
+          echo "Checking for vulnerable tar versions..."
+
+          if npm ls tar@7.5.20 --all 2>/dev/null; then
+            echo "ERROR: Vulnerable tar 7.5.20 detected."
+            exit 1
+          fi
+
+      # --------------------------------------------------
+      # 8. Security audit
       # --------------------------------------------------
 
       - name: Security audit
-        run: npm audit --audit-level=high
+        run: |
+          set -euo pipefail
+
+          npm audit --audit-level=high
 
       # --------------------------------------------------
-      # 6. Build PocketRule web application
+      # 9. Build PocketRule web application
       # --------------------------------------------------
 
       - name: Build PocketRule
-        run: npm run build
+        run: |
+          set -euo pipefail
+          npm run build
 
       # --------------------------------------------------
-      # 7. Add Android platform
+      # 10. Add Android platform
       # --------------------------------------------------
 
       - name: Add Android platform
-        run: npx cap add android
+        run: |
+          set -euo pipefail
+          npx cap add android
 
       # --------------------------------------------------
-      # 8. Generate Android assets
+      # 11. Generate Android assets
       # --------------------------------------------------
 
       - name: Generate Android assets
         run: |
-          npm install --save-dev @capacitor/assets
+          set -euo pipefail
           npx @capacitor/assets generate --android
 
       # --------------------------------------------------
-      # 9. Add Android notification permission
+      # 12. Add Android notification permission
       # --------------------------------------------------
 
       - name: Add Android notification permission
@@ -114,7 +180,11 @@ jobs:
           )
 
           if permission not in text:
-              marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+
+              marker = (
+                  '<manifest '
+                  'xmlns:android="http://schemas.android.com/apk/res/android">'
+              )
 
               if marker not in text:
                   raise SystemExit(
@@ -129,18 +199,22 @@ jobs:
 
               manifest.write_text(text)
 
-          print("POST_NOTIFICATIONS permission verified.")
+          print(
+              "POST_NOTIFICATIONS permission verified."
+          )
           PY
 
       # --------------------------------------------------
-      # 10. Sync Capacitor
+      # 13. Sync Capacitor
       # --------------------------------------------------
 
       - name: Sync Capacitor
-        run: npx cap sync android
+        run: |
+          set -euo pipefail
+          npx cap sync android
 
       # --------------------------------------------------
-      # 11. Setup Java 21
+      # 14. Setup Java 21
       # --------------------------------------------------
 
       - name: Setup Java
@@ -150,7 +224,7 @@ jobs:
           java-version: 21
 
       # --------------------------------------------------
-      # 12. Validate signing secrets
+      # 15. Validate signing secrets
       # --------------------------------------------------
 
       - name: Validate signing secrets
@@ -185,7 +259,7 @@ jobs:
           echo "Required signing secrets are present."
 
       # --------------------------------------------------
-      # 13. Decode temporary upload keystore
+      # 16. Decode temporary upload keystore
       # --------------------------------------------------
 
       - name: Decode upload keystore
@@ -193,8 +267,6 @@ jobs:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           set -euo pipefail
-
-          mkdir -p android
 
           printf '%s' "$ANDROID_KEYSTORE_BASE64" \
             | base64 --decode > android/upload-keystore.jks
@@ -209,7 +281,7 @@ jobs:
           echo "Temporary upload keystore created."
 
       # --------------------------------------------------
-      # 14. Configure Android release signing
+      # 17. Configure Android release signing
       # --------------------------------------------------
 
       - name: Configure Android release signing
@@ -224,7 +296,9 @@ jobs:
           from pathlib import Path
           import re
 
-          path = Path("android/app/build.gradle")
+          path = Path(
+              "android/app/build.gradle"
+          )
 
           if not path.exists():
               raise SystemExit(
@@ -234,24 +308,8 @@ jobs:
           text = path.read_text()
 
           # ------------------------------------------------
-          # PocketRule release signing configuration.
-          # ------------------------------------------------
-
-          signing_block = """signingConfigs {
-              release {
-                  storeFile file("../upload-keystore.jks")
-                  storePassword System.getenv("KEYSTORE_PASSWORD")
-                  keyAlias System.getenv("KEY_ALIAS")
-                  keyPassword System.getenv("KEY_PASSWORD")
-              }
-          }"""
-
-          # ------------------------------------------------
-          # Remove only a previously generated PocketRule
-          # signing block.
-          #
-          # This avoids the unsafe generic nested-brace
-          # regex that could damage Gradle configuration.
+          # Remove a previously generated PocketRule
+          # signing configuration if present.
           # ------------------------------------------------
 
           generated_pattern = re.compile(
@@ -265,35 +323,54 @@ jobs:
               re.DOTALL
           )
 
-          text = generated_pattern.sub("", text)
+          text = generated_pattern.sub(
+              "",
+              text
+          )
 
           # ------------------------------------------------
-          # Add clean PocketRule signing configuration.
+          # Add release signing configuration.
           # ------------------------------------------------
 
-          android_pattern = r'android\s*\{'
+          signing_block = """signingConfigs {
+              release {
+                  storeFile file("../upload-keystore.jks")
+                  storePassword System.getenv("KEYSTORE_PASSWORD")
+                  keyAlias System.getenv("KEY_ALIAS")
+                  keyPassword System.getenv("KEY_PASSWORD")
+              }
+          }"""
 
-          if not re.search(android_pattern, text):
+          if not re.search(
+              r'android\s*\{',
+              text
+          ):
               raise SystemExit(
-                  "Could not find android block in build.gradle."
+                  "Could not find android block."
               )
 
           text = re.sub(
-              android_pattern,
+              r'android\s*\{',
               "android {\n    " +
-              signing_block.replace("\n", "\n    "),
+              signing_block.replace(
+                  "\n",
+                  "\n    "
+              ),
               text,
               count=1
           )
 
           # ------------------------------------------------
-          # Set PocketRule version.
+          # PocketRule release version.
           # ------------------------------------------------
 
           version_code = "11706"
           version_name = "1.17.6"
 
-          if re.search(r'versionCode\s+\d+', text):
+          if re.search(
+              r'versionCode\s+\d+',
+              text
+          ):
               text = re.sub(
                   r'versionCode\s+\d+',
                   f'versionCode {version_code}',
@@ -302,7 +379,7 @@ jobs:
               )
           else:
               raise SystemExit(
-                  "Could not find versionCode in build.gradle."
+                  "Could not find versionCode."
               )
 
           if re.search(
@@ -317,7 +394,7 @@ jobs:
               )
           else:
               raise SystemExit(
-                  "Could not find versionName in build.gradle."
+                  "Could not find versionName."
               )
 
           # ------------------------------------------------
@@ -332,6 +409,7 @@ jobs:
               r'signingConfig\s+signingConfigs\.release',
               text
           ):
+
               if not re.search(
                   release_pattern,
                   text
@@ -355,7 +433,7 @@ jobs:
           PY
 
       # --------------------------------------------------
-      # 15. Build signed production AAB
+      # 18. Build signed production AAB
       # --------------------------------------------------
 
       - name: Build signed release AAB
@@ -374,7 +452,7 @@ jobs:
           ./gradlew bundleRelease
 
       # --------------------------------------------------
-      # 16. Verify AAB exists
+      # 19. Verify AAB exists
       # --------------------------------------------------
 
       - name: Verify AAB
@@ -400,7 +478,7 @@ jobs:
           ls -lh "$AAB"
 
       # --------------------------------------------------
-      # 17. Verify AAB signing
+      # 20. Verify AAB signing
       # --------------------------------------------------
 
       - name: Verify AAB signing
@@ -428,7 +506,7 @@ jobs:
           echo "AAB signature verification completed."
 
       # --------------------------------------------------
-      # 18. Upload production AAB
+      # 21. Upload production AAB
       # --------------------------------------------------
 
       - name: Upload PocketRule AAB
@@ -440,7 +518,7 @@ jobs:
           retention-days: 30
 
       # --------------------------------------------------
-      # 19. Cleanup signing material
+      # 22. Cleanup signing material
       # --------------------------------------------------
 
       - name: Cleanup signing material
