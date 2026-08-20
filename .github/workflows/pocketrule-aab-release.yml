@@ -33,16 +33,13 @@ jobs:
 
       # ==================================================
       # 3. INSTALL PROJECT DEPENDENCIES
-      #
-      # Use npm install because the repository currently
-      # does not contain package-lock.json.
       # ==================================================
 
       - name: Install dependencies
         run: npm install
 
       # ==================================================
-      # 4. INSTALL REQUIRED CAPACITOR PACKAGES
+      # 4. INSTALL CAPACITOR PACKAGES
       # ==================================================
 
       - name: Install Capacitor packages
@@ -56,9 +53,6 @@ jobs:
 
       # ==================================================
       # 5. SECURITY AUDIT
-      #
-      # Audit vulnerabilities should not prevent the
-      # production build from continuing.
       # ==================================================
 
       - name: Security audit
@@ -66,7 +60,7 @@ jobs:
           npm audit --audit-level=high || true
 
       # ==================================================
-      # 6. BUILD POCKETRULE WEB APP
+      # 6. BUILD POCKETRULE
       # ==================================================
 
       - name: Build PocketRule
@@ -89,7 +83,7 @@ jobs:
           npx @capacitor/assets generate --android
 
       # ==================================================
-      # 9. ADD ANDROID NOTIFICATION PERMISSION
+      # 9. ADD NOTIFICATION PERMISSION
       # ==================================================
 
       - name: Add Android notification permission
@@ -133,7 +127,7 @@ jobs:
         run: npx cap sync android
 
       # ==================================================
-      # 11. SETUP JAVA 21
+      # 11. SETUP JAVA
       # ==================================================
 
       - name: Setup Java
@@ -180,7 +174,7 @@ jobs:
           echo "All signing secrets are present."
 
       # ==================================================
-      # 13. DECODE UPLOAD KEYSTORE
+      # 13. DECODE KEYSTORE
       # ==================================================
 
       - name: Decode upload keystore
@@ -204,7 +198,52 @@ jobs:
           echo "Keystore decoded successfully."
 
       # ==================================================
-      # 14. VERIFY KEYSTORE PASSWORD AND ALIAS
+      # 14. DETECT ACTUAL KEYSTORE TYPE
+      # ==================================================
+
+      - name: Detect keystore type
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          echo "Detecting keystore format..."
+
+          keytool_output="$(
+            keytool \
+              -list \
+              -v \
+              -keystore android/upload-keystore.jks \
+              -storepass "$KEYSTORE_PASSWORD" \
+              2>&1
+          )"
+
+          echo "$keytool_output" > /tmp/keystore-type-check.txt
+
+          echo "$keytool_output" | grep "Keystore type:" || {
+            echo "ERROR: Could not determine keystore type."
+            cat /tmp/keystore-type-check.txt
+            exit 1
+          }
+
+          KEYSTORE_TYPE="$(
+            echo "$keytool_output" \
+              | grep "Keystore type:" \
+              | head -1 \
+              | sed 's/.*Keystore type: *//'
+          )"
+
+          if [ -z "$KEYSTORE_TYPE" ]; then
+            echo "ERROR: Keystore type is empty."
+            exit 1
+          fi
+
+          echo "Detected keystore type: $KEYSTORE_TYPE"
+
+          echo "KEYSTORE_TYPE=$KEYSTORE_TYPE" >> "$GITHUB_ENV"
+
+      # ==================================================
+      # 15. VERIFY KEYSTORE AND ALIAS
       # ==================================================
 
       - name: Verify keystore
@@ -214,7 +253,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Checking keystore..."
+          echo "Checking keystore and alias..."
 
           keytool \
             -list \
@@ -226,17 +265,14 @@ jobs:
               cat /tmp/keystore-check.txt
               echo ""
               echo "ERROR: Keystore verification failed."
-              echo "The keystore password or key alias does not match the keystore."
+              echo "Check KEYSTORE_PASSWORD and KEY_ALIAS."
               exit 1
           }
 
           echo "Keystore password and alias are valid."
 
       # ==================================================
-      # 15. VERIFY PRIVATE KEY PASSWORD
-      #
-      # This catches the exact problem we previously saw:
-      # "Given final block not properly padded"
+      # 16. VERIFY PRIVATE KEY PASSWORD
       # ==================================================
 
       - name: Verify private key password
@@ -266,7 +302,7 @@ jobs:
               echo ""
               echo "ERROR: PRIVATE KEY PASSWORD IS NOT VALID."
               echo ""
-              echo "The keystore exists, but KEY_PASSWORD does not unlock the key."
+              echo "The keystore opens, but KEY_PASSWORD cannot unlock the private key."
               exit 1
           }
 
@@ -275,7 +311,7 @@ jobs:
           echo "Private key password is valid."
 
       # ==================================================
-      # 16. CONFIGURE ANDROID RELEASE SIGNING
+      # 17. CONFIGURE ANDROID SIGNING
       # ==================================================
 
       - name: Configure Android release signing
@@ -287,7 +323,7 @@ jobs:
           path = Path("android/app/build.gradle")
           text = path.read_text()
 
-          # Remove any previous generated signing configuration.
+          # Remove previously generated signing configuration.
           text = re.sub(
               r'\n\s*signingConfigs\s*\{.*?\n\s*\}',
               '',
@@ -299,6 +335,7 @@ jobs:
               signingConfigs {
                   release {
                       storeFile file("../upload-keystore.jks")
+                      storeType System.getenv("KEYSTORE_TYPE")
                       storePassword System.getenv("KEYSTORE_PASSWORD")
                       keyAlias System.getenv("KEY_ALIAS")
                       keyPassword System.getenv("KEY_PASSWORD")
@@ -317,7 +354,7 @@ jobs:
               1
           )
 
-          # Set PocketRule version.
+          # PocketRule version.
           version_code = "11706"
           version_name = "1.17.6"
 
@@ -348,7 +385,7 @@ jobs:
                   "Could not find versionName in build.gradle."
               )
 
-          # Attach signing configuration to release build.
+          # Attach release signing.
           release_pattern = (
               r'(buildTypes\s*\{\s*release\s*\{)'
           )
@@ -380,7 +417,7 @@ jobs:
           PY
 
       # ==================================================
-      # 17. BUILD SIGNED RELEASE AAB
+      # 18. BUILD SIGNED AAB
       # ==================================================
 
       - name: Build signed release AAB
@@ -389,8 +426,11 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEYSTORE_TYPE: ${{ env.KEYSTORE_TYPE }}
         run: |
           set -euo pipefail
+
+          echo "Using keystore type: $KEYSTORE_TYPE"
 
           chmod +x gradlew
 
@@ -399,7 +439,7 @@ jobs:
           ./gradlew bundleRelease --stacktrace
 
       # ==================================================
-      # 18. VERIFY AAB EXISTS
+      # 19. VERIFY AAB
       # ==================================================
 
       - name: Verify AAB
@@ -427,7 +467,7 @@ jobs:
           ls -lh "$AAB"
 
       # ==================================================
-      # 19. VERIFY AAB SIGNING
+      # 20. VERIFY AAB SIGNATURE
       # ==================================================
 
       - name: Verify AAB signing
@@ -452,7 +492,7 @@ jobs:
           echo "AAB signature verification completed successfully."
 
       # ==================================================
-      # 20. UPLOAD PRODUCTION AAB
+      # 21. UPLOAD AAB
       # ==================================================
 
       - name: Upload PocketRule AAB
@@ -464,7 +504,7 @@ jobs:
           retention-days: 30
 
       # ==================================================
-      # 21. CLEANUP SIGNING MATERIAL
+      # 22. CLEANUP
       # ==================================================
 
       - name: Cleanup signing material
@@ -474,6 +514,7 @@ jobs:
           rm -f /tmp/pocketrule-signing-test.p12
           rm -f /tmp/keystore-check.txt
           rm -f /tmp/key-test.txt
+          rm -f /tmp/keystore-type-check.txt
 
           if [ -f android/upload-keystore.jks ]; then
             echo "ERROR: Keystore cleanup failed."
