@@ -164,7 +164,7 @@ jobs:
           echo "All signing secrets are present."
 
       # --------------------------------------------------
-      # 12. Decode upload keystore
+      # 12. Decode original PKCS12 keystore
       # --------------------------------------------------
 
       - name: Decode upload keystore
@@ -174,73 +174,44 @@ jobs:
           set -euo pipefail
 
           printf '%s' "$ANDROID_KEYSTORE_BASE64" \
-            | base64 --decode > android/upload-keystore.jks
+            | base64 --decode > android/upload-keystore.p12
 
-          test -s android/upload-keystore.jks || {
+          test -s android/upload-keystore.p12 || {
             echo "Keystore could not be decoded."
             exit 1
           }
 
-          chmod 600 android/upload-keystore.jks
+          chmod 600 android/upload-keystore.p12
 
-          echo "Keystore decoded successfully."
-
-      # --------------------------------------------------
-      # 13. Detect keystore type
-      # --------------------------------------------------
-
-      - name: Detect keystore type
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-        run: |
-          set -euo pipefail
-
-          echo "Detecting keystore type..."
-
-          keytool \
-            -list \
-            -v \
-            -keystore android/upload-keystore.jks \
-            -storepass "$KEYSTORE_PASSWORD" \
-            > /tmp/keystore-info.txt
-
-          if grep -q "Keystore type: PKCS12" /tmp/keystore-info.txt; then
-            echo "Using keystore type: PKCS12"
-          elif grep -q "Keystore type: JKS" /tmp/keystore-info.txt; then
-            echo "Using keystore type: JKS"
-          else
-            echo "Could not determine keystore type."
-            exit 1
-          fi
+          echo "Original PKCS12 keystore decoded."
 
       # --------------------------------------------------
-      # 14. Verify keystore
+      # 13. Verify original PKCS12 keystore
       # --------------------------------------------------
 
-      - name: Verify keystore
+      - name: Verify original keystore
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           set -euo pipefail
 
-          echo "Verifying keystore..."
-
           keytool \
             -list \
             -v \
-            -keystore android/upload-keystore.jks \
+            -keystore android/upload-keystore.p12 \
+            -storetype PKCS12 \
             -storepass "$KEYSTORE_PASSWORD" \
             -alias "$KEY_ALIAS" \
-            > /tmp/key-info.txt
+            > /tmp/original-keystore.txt
 
-          echo "Keystore and alias are valid."
+          echo "Original PKCS12 keystore verified."
 
       # --------------------------------------------------
-      # 15. Verify private key password
+      # 14. Convert PKCS12 to JKS for Gradle
       # --------------------------------------------------
 
-      - name: Verify private key password
+      - name: Convert keystore to JKS
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
@@ -248,32 +219,63 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Testing private key password..."
+          echo "Converting PKCS12 keystore to JKS..."
+
+          rm -f android/upload-keystore.jks
 
           keytool \
             -importkeystore \
-            -srckeystore android/upload-keystore.jks \
+            -srckeystore android/upload-keystore.p12 \
             -srcstoretype PKCS12 \
             -srcstorepass "$KEYSTORE_PASSWORD" \
             -srcalias "$KEY_ALIAS" \
             -srckeypass "$KEY_PASSWORD" \
-            -destkeystore /tmp/pocketrule-key-test.jks \
+            -destkeystore android/upload-keystore.jks \
             -deststoretype JKS \
             -deststorepass "$KEYSTORE_PASSWORD" \
-            -destkeypass "$KEY_PASSWORD" \
+            -destkeypass "$KEYSTORE_PASSWORD" \
             -destalias "$KEY_ALIAS" \
-            -noprompt \
-            > /tmp/key-password-test.txt 2>&1
+            -noprompt
 
-          echo "Private key password is valid."
+          test -s android/upload-keystore.jks || {
+            echo "JKS conversion failed."
+            exit 1
+          }
 
-          rm -f /tmp/pocketrule-key-test.jks
+          chmod 600 android/upload-keystore.jks
+
+          echo "PKCS12 successfully converted to JKS."
+
+      # --------------------------------------------------
+      # 15. Verify converted JKS
+      # --------------------------------------------------
+
+      - name: Verify converted JKS
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+
+          keytool \
+            -list \
+            -v \
+            -keystore android/upload-keystore.jks \
+            -storetype JKS \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" \
+            > /tmp/jks-info.txt
+
+          echo "Converted JKS keystore is valid."
 
       # --------------------------------------------------
       # 16. Configure Android release signing
       # --------------------------------------------------
 
       - name: Configure Android release signing
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -282,7 +284,7 @@ jobs:
           path = Path("android/app/build.gradle")
           text = path.read_text()
 
-          # Remove previously injected signingConfigs blocks.
+          # Remove previously injected signing configurations.
           text = re.sub(
               r'\n\s*signingConfigs\s*\{.*?\n\s*\}',
               '',
@@ -293,174 +295,4 @@ jobs:
           signing_config = '''
               signingConfigs {
                   release {
-                      storeFile file("../upload-keystore.jks")
-                      storeType "PKCS12"
-                      storePassword System.getenv("KEYSTORE_PASSWORD")
-                      keyAlias System.getenv("KEY_ALIAS")
-                      keyPassword System.getenv("KEY_PASSWORD")
-                  }
-              }
-          '''
-
-          if "android {" not in text:
-              raise SystemExit(
-                  "Could not find android block in build.gradle."
-              )
-
-          text = text.replace(
-              "android {",
-              "android {" + signing_config,
-              1
-          )
-
-          # ------------------------------------------------
-          # PocketRule version
-          # ------------------------------------------------
-
-          version_code = "11706"
-          version_name = "1.17.6"
-
-          if re.search(r"versionCode\s+\d+", text):
-              text = re.sub(
-                  r"versionCode\s+\d+",
-                  f"versionCode {version_code}",
-                  text,
-                  count=1
-              )
-          else:
-              raise SystemExit(
-                  "Could not find versionCode in build.gradle."
-              )
-
-          if re.search(
-              r'versionName\s+["\'][^"\']+["\']',
-              text
-          ):
-              text = re.sub(
-                  r'versionName\s+["\'][^"\']+["\']',
-                  f'versionName "{version_name}"',
-                  text,
-                  count=1
-              )
-          else:
-              raise SystemExit(
-                  "Could not find versionName in build.gradle."
-              )
-
-          # ------------------------------------------------
-          # Attach signing configuration to release build
-          # ------------------------------------------------
-
-          release_pattern = (
-              r'(buildTypes\s*\{\s*release\s*\{)'
-          )
-
-          if not re.search(
-              r'signingConfig\s+signingConfigs\.release',
-              text
-          ):
-              if not re.search(
-                  release_pattern,
-                  text
-              ):
-                  raise SystemExit(
-                      "Could not find release build type."
-                  )
-
-              text = re.sub(
-                  release_pattern,
-                  r'\1\n            signingConfig signingConfigs.release',
-                  text,
-                  count=1
-              )
-
-          path.write_text(text)
-
-          print(
-              "Android PKCS12 release signing configured."
-          )
-          PY
-
-      # --------------------------------------------------
-      # 17. Confirm signing configuration
-      # --------------------------------------------------
-
-      - name: Confirm signing configuration
-        run: |
-          set -euo pipefail
-
-          grep -n -A12 -B2 "signingConfigs" \
-            android/app/build.gradle
-
-          echo "Signing configuration confirmed."
-
-      # --------------------------------------------------
-      # 18. Build signed production AAB
-      # --------------------------------------------------
-
-      - name: Build signed release AAB
-        working-directory: android
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-
-          chmod +x gradlew
-
-          ./gradlew clean
-
-          ./gradlew bundleRelease \
-            --stacktrace
-
-      # --------------------------------------------------
-      # 19. Verify AAB
-      # --------------------------------------------------
-
-      - name: Verify AAB
-        run: |
-          set -euo pipefail
-
-          AAB="android/app/build/outputs/bundle/release/app-release.aab"
-
-          if [ ! -f "$AAB" ]; then
-            echo "ERROR: Release AAB was not created."
-            exit 1
-          fi
-
-          if [ ! -s "$AAB" ]; then
-            echo "ERROR: Release AAB is empty."
-            exit 1
-          fi
-
-          echo "PocketRule AAB successfully created:"
-          ls -lh "$AAB"
-
-      # --------------------------------------------------
-      # 20. Upload production AAB
-      # --------------------------------------------------
-
-      - name: Upload PocketRule AAB
-        uses: actions/upload-artifact@v4
-        with:
-          name: PocketRule-AAB-1.17.6-${{ github.run_number }}
-          path: android/app/build/outputs/bundle/release/app-release.aab
-          if-no-files-found: error
-          retention-days: 30
-
-      # --------------------------------------------------
-      # 21. Cleanup signing material
-      # --------------------------------------------------
-
-      - name: Cleanup signing material
-        if: always()
-        run: |
-          rm -f android/upload-keystore.jks
-
-          if [ -f android/upload-keystore.jks ]; then
-            echo "ERROR: Keystore cleanup failed."
-            exit 1
-          fi
-
-          echo "Temporary signing material removed."
+                      storeFile file("../upload
