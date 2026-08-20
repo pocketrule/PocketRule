@@ -27,13 +27,8 @@ jobs:
       # 2. SETUP NODE
       # ============================================================
 
-      # IMPORTANT:
-      # No npm cache is enabled because the repository does not
-      # currently have a package-lock.json.
-      #
-      # This prevents the previous:
-      # "Dependencies lock file is not found"
-      # error.
+      # No npm cache because the repository does not currently
+      # have a package-lock.json.
 
       - name: Setup Node
         uses: actions/setup-node@v7
@@ -67,13 +62,9 @@ jobs:
       # ============================================================
       # 5. SECURITY AUDIT
       # ============================================================
-      #
-      # The audit must NOT prevent the production build.
-      #
-      # The previous audit found vulnerabilities in development
-      # dependencies such as @capacitor/assets / sharp.
-      #
-      # We record the audit but allow the build to continue.
+
+      # Audit vulnerabilities are reported but do not stop the
+      # production build.
 
       - name: Security audit
         continue-on-error: true
@@ -336,29 +327,8 @@ jobs:
 
 
       # ============================================================
-      # 17. CONVERT PKCS12 TO JKS
+      # 17. PREPARE JKS SIGNING KEYSTORE
       # ============================================================
-      #
-      # THIS IS THE IMPORTANT FIX.
-      #
-      # The previous workflow used:
-      #
-      #   -srckeypass
-      #
-      # without explicitly specifying:
-      #
-      #   -srcalias
-      #
-      # That caused:
-      #
-      # "if alias not specified, destalias and srckeypass
-      #  must not be specified"
-      #
-      # Also, PKCS12 does not support separate store/key
-      # passwords in the same way JKS does.
-      #
-      # We therefore explicitly specify the source alias and
-      # create a JKS file for Android signing.
 
       - name: Prepare JKS signing keystore
         env:
@@ -459,6 +429,10 @@ jobs:
       # ============================================================
 
       - name: Configure Android release signing
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -472,10 +446,6 @@ jobs:
               )
 
           text = path.read_text()
-
-          # --------------------------------------------------------
-          # Add signing configuration inside android {}
-          # --------------------------------------------------------
 
           signing_config = """
               signingConfigs {
@@ -491,8 +461,7 @@ jobs:
 
           if "signingConfigs {" in text:
               raise SystemExit(
-                  "ERROR: A signingConfigs block already exists. "
-                  "Do not run with a manually inserted signing block."
+                  "ERROR: A signingConfigs block already exists."
               )
 
           if "android {" not in text:
@@ -506,10 +475,7 @@ jobs:
               1
           )
 
-          # --------------------------------------------------------
           # PocketRule version
-          # --------------------------------------------------------
-
           version_code = "11706"
           version_name = "1.17.6"
 
@@ -540,10 +506,6 @@ jobs:
                   "ERROR: versionName was not found."
               )
 
-          # --------------------------------------------------------
-          # Attach signing configuration to release
-          # --------------------------------------------------------
-
           release_pattern = r'(buildTypes\s*\{\s*release\s*\{)'
 
           if not re.search(
@@ -572,7 +534,7 @@ jobs:
 
 
       # ============================================================
-      # 20. SHOW FINAL SIGNING CONFIGURATION
+      # 20. VERIFY ANDROID SIGNING CONFIGURATION
       # ============================================================
 
       - name: Verify Android signing configuration
@@ -669,4 +631,37 @@ jobs:
           echo "============================================"
 
 
-      # =====================================================
+      # ============================================================
+      # 24. UPLOAD AAB TO GITHUB
+      # ============================================================
+
+      - name: Upload PocketRule AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketRule-AAB-1.17.6-${{ github.run_number }}
+          path: android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 30
+
+
+      # ============================================================
+      # 25. CLEANUP SIGNING MATERIAL
+      # ============================================================
+
+      - name: Cleanup signing material
+        if: always()
+        run: |
+          rm -f android/upload-keystore-original
+          rm -f android/upload-keystore.jks
+
+          if [ -f android/upload-keystore-original ]; then
+            echo "ERROR: Original keystore cleanup failed."
+            exit 1
+          fi
+
+          if [ -f android/upload-keystore.jks ]; then
+            echo "ERROR: JKS cleanup failed."
+            exit 1
+          fi
+
+          echo "Temporary signing material removed."
