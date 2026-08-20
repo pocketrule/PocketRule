@@ -12,10 +12,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # --------------------------------------------------
+      # 1. Checkout
+      # --------------------------------------------------
+
       - name: Checkout PocketRule
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+
+      # --------------------------------------------------
+      # 2. Node
+      # --------------------------------------------------
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -23,8 +32,23 @@ jobs:
           node-version: 22
           cache: npm
 
+      # --------------------------------------------------
+      # 3. Install project dependencies
+      # --------------------------------------------------
+
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      # --------------------------------------------------
+      # 4. Security audit
+      # --------------------------------------------------
+
+      - name: Security audit
+        run: npm audit --audit-level=high
+
+      # --------------------------------------------------
+      # 5. Install required Capacitor packages
+      # --------------------------------------------------
 
       - name: Install Capacitor packages
         run: |
@@ -35,33 +59,57 @@ jobs:
             @capacitor/cli@7.6.8 \
             lucide-react@0.468.0
 
-      - name: Security audit
-        run: npm audit --audit-level=high
+      # --------------------------------------------------
+      # 6. Build PocketRule web app
+      # --------------------------------------------------
 
       - name: Build PocketRule
         run: npm run build
 
+      # --------------------------------------------------
+      # 7. Add Android platform if required
+      # --------------------------------------------------
+
       - name: Add Android platform
         run: npx cap add android
+
+      # --------------------------------------------------
+      # 8. Generate Android assets
+      # --------------------------------------------------
 
       - name: Generate Android assets
         run: |
           npm install --save-dev @capacitor/assets
           npx @capacitor/assets generate --android
 
+      # --------------------------------------------------
+      # 9. Add notification permission
+      # --------------------------------------------------
+
       - name: Add Android notification permission
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          manifest = Path(
+              "android/app/src/main/AndroidManifest.xml"
+          )
+
           text = manifest.read_text()
 
           marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
 
-          permission = '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />'
+          permission = (
+              '<uses-permission '
+              'android:name="android.permission.POST_NOTIFICATIONS" />'
+          )
 
           if permission not in text:
+              if marker not in text:
+                  raise SystemExit(
+                      "Could not find Android manifest root."
+                  )
+
               text = text.replace(
                   marker,
                   marker + "\n    " + permission,
@@ -71,14 +119,26 @@ jobs:
           manifest.write_text(text)
           PY
 
+      # --------------------------------------------------
+      # 10. Sync Capacitor
+      # --------------------------------------------------
+
       - name: Sync Capacitor
         run: npx cap sync android
+
+      # --------------------------------------------------
+      # 11. Java 21
+      # --------------------------------------------------
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 21
+
+      # --------------------------------------------------
+      # 12. Validate signing secrets
+      # --------------------------------------------------
 
       - name: Validate signing secrets
         env:
@@ -87,6 +147,8 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          set -euo pipefail
+
           test -n "$ANDROID_KEYSTORE_BASE64" || {
             echo "Missing ANDROID_KEYSTORE_BASE64 secret"
             exit 1
@@ -107,18 +169,35 @@ jobs:
             exit 1
           }
 
+      # --------------------------------------------------
+      # 13. Decode temporary upload keystore
+      # --------------------------------------------------
+
       - name: Decode upload keystore
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
+          set -euo pipefail
+
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" \
+            | base64 --decode > android/upload-keystore.jks
 
           test -s android/upload-keystore.jks || {
             echo "Keystore could not be decoded."
             exit 1
           }
 
+          chmod 600 android/upload-keystore.jks
+
+      # --------------------------------------------------
+      # 14. Configure Android release signing
+      # --------------------------------------------------
+
       - name: Configure Android release signing
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -127,7 +206,7 @@ jobs:
           path = Path("android/app/build.gradle")
           text = path.read_text()
 
-          # Remove any previous generated signing configuration.
+          # Remove previously generated signing configuration.
           text = re.sub(
               r'\n\s*signingConfigs\s*\{.*?\n\s*\}',
               '',
@@ -135,17 +214,21 @@ jobs:
               flags=re.DOTALL
           )
 
-          # Add clean release signing configuration.
-          signing_config = """
-    signingConfigs {
-        release {
-            storeFile file("../upload-keystore.jks")
-            storePassword System.getenv("KEYSTORE_PASSWORD")
-            keyAlias System.getenv("KEY_ALIAS")
-            keyPassword System.getenv("KEY_PASSWORD")
-        }
-    }
-"""
+          signing_config = '''
+          signingConfigs {
+              release {
+                  storeFile file("../upload-keystore.jks")
+                  storePassword System.getenv("KEYSTORE_PASSWORD")
+                  keyAlias System.getenv("KEY_ALIAS")
+                  keyPassword System.getenv("KEY_PASSWORD")
+              }
+          }
+          '''
+
+          if "android {" not in text:
+              raise SystemExit(
+                  "Could not find android block in build.gradle."
+              )
 
           text = text.replace(
               "android {",
@@ -153,28 +236,57 @@ jobs:
               1
           )
 
-          # Set version.
-          text = re.sub(
-              r'versionCode\s+\d+',
-              'versionCode 11706',
-              text,
-              count=1
-          )
+          # ------------------------------------------------
+          # Force PocketRule release version.
+          # ------------------------------------------------
 
-          text = re.sub(
+          version_code = "11706"
+          version_name = "1.17.6"
+
+          if re.search(r"versionCode\s+\d+", text):
+              text = re.sub(
+                  r"versionCode\s+\d+",
+                  f"versionCode {version_code}",
+                  text,
+                  count=1
+              )
+          else:
+              raise SystemExit(
+                  "Could not find versionCode in build.gradle."
+              )
+
+          if re.search(
               r'versionName\s+["\'][^"\']+["\']',
-              'versionName "1.17.6"',
-              text,
-              count=1
-          )
+              text
+          ):
+              text = re.sub(
+                  r'versionName\s+["\'][^"\']+["\']',
+                  f'versionName "{version_name}"',
+                  text,
+                  count=1
+              )
+          else:
+              raise SystemExit(
+                  "Could not find versionName in build.gradle."
+              )
 
+          # ------------------------------------------------
           # Attach signing configuration to release build.
-          release_pattern = r'(buildTypes\s*\{\s*release\s*\{)'
+          # ------------------------------------------------
+
+          release_pattern = (
+              r'(buildTypes\s*\{\s*release\s*\{)'
+          )
 
           if not re.search(
               r'signingConfig\s+signingConfigs\.release',
               text
           ):
+              if not re.search(release_pattern, text):
+                  raise SystemExit(
+                      "Could not find release build type."
+                  )
+
               text = re.sub(
                   release_pattern,
                   r'\1\n            signingConfig signingConfigs.release',
@@ -184,8 +296,14 @@ jobs:
 
           path.write_text(text)
 
-          print("Release signing configuration prepared.")
+          print(
+              "Android release configuration prepared."
+          )
           PY
+
+      # --------------------------------------------------
+      # 15. Build ONE signed production AAB
+      # --------------------------------------------------
 
       - name: Build signed release AAB
         working-directory: android
@@ -194,14 +312,21 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          set -euo pipefail
+
           chmod +x gradlew
 
           ./gradlew clean
-
           ./gradlew bundleRelease
+
+      # --------------------------------------------------
+      # 16. Verify AAB
+      # --------------------------------------------------
 
       - name: Verify AAB
         run: |
+          set -euo pipefail
+
           AAB="android/app/build/outputs/bundle/release/app-release.aab"
 
           if [ ! -f "$AAB" ]; then
@@ -209,13 +334,49 @@ jobs:
             exit 1
           fi
 
-          echo "========================================"
-          echo "PocketRule AAB successfully created"
-          echo "========================================"
+          if [ ! -s "$AAB" ]; then
+            echo "ERROR: Release AAB is empty."
+            exit 1
+          fi
 
+          echo "PocketRule AAB successfully created:"
           ls -lh "$AAB"
 
-      - name: Upload AAB artifact
+      # --------------------------------------------------
+      # 17. Verify APK/AAB signing
+      # --------------------------------------------------
+
+      - name: Verify AAB signing
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          AAB="android/app/build/outputs/bundle/release/app-release.aab"
+
+          if [ ! -f "$AAB" ]; then
+            echo "AAB not found."
+            exit 1
+          fi
+
+          jarsigner \
+            -verify \
+            -verbose \
+            "$AAB" > /tmp/jarsigner-output.txt 2>&1 || {
+              cat /tmp/jarsigner-output.txt
+              echo "ERROR: AAB signature verification failed."
+              exit 1
+          }
+
+          cat /tmp/jarsigner-output.txt
+
+          echo "AAB signature verification completed."
+
+      # --------------------------------------------------
+      # 18. Upload production AAB
+      # --------------------------------------------------
+
+      - name: Upload PocketRule AAB
         uses: actions/upload-artifact@v4
         with:
           name: PocketRule-AAB-1.17.6-${{ github.run_number }}
@@ -223,203 +384,18 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Cleanup signing material
-        if: always()
-        run: |
-          rm -f android/upload-keystore.jks
-      - name: Validate signing secrets
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          test -n "$ANDROID_KEYSTORE_BASE64" || {
-            echo "Missing ANDROID_KEYSTORE_BASE64 secret"
-            exit 1
-          }
-
-          test -n "$KEYSTORE_PASSWORD" || {
-            echo "Missing KEYSTORE_PASSWORD secret"
-            exit 1
-          }
-
-          test -n "$KEY_ALIAS" || {
-            echo "Missing KEY_ALIAS secret"
-            exit 1
-          }
-
-          test -n "$KEY_PASSWORD" || {
-            echo "Missing KEY_PASSWORD secret"
-            exit 1
-          }
-
-      - name: Decode upload keystore
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        run: |
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
-
-          test -s android/upload-keystore.jks || {
-            echo "Keystore could not be decoded."
-            exit 1
-          }
-
-      - name: Configure Android release signing
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          path = Path("android/app/build.gradle")
-          text = path.read_text()
-
-          # ---------------------------------------------------------
-          # 1. Add release signing configuration if it doesn't exist
-          # ---------------------------------------------------------
-
-          signing_block = """
-              release {
-                  storeFile file("../upload-keystore.jks")
-                  storePassword System.getenv("KEYSTORE_PASSWORD")
-                  keyAlias System.getenv("KEY_ALIAS")
-                  keyPassword System.getenv("KEY_PASSWORD")
-              }
-          """
-
-          if "signingConfigs {" not in text:
-              text = text.replace(
-                  "android {",
-                  """android {
-
-              signingConfigs {
-          """ + signing_block + """
-              }
-          """,
-                  1
-              )
-          elif "signingConfigs.release" not in text:
-              text = text.replace(
-                  "signingConfigs {",
-                  "signingConfigs {" + signing_block,
-                  1
-              )
-
-          # ---------------------------------------------------------
-          # 2. Set release signing configuration
-          # ---------------------------------------------------------
-
-          if "signingConfig signingConfigs.release" not in text:
-
-              release_pattern = r"(buildTypes\s*\{\s*release\s*\{)"
-
-              text, count = re.subn(
-                  release_pattern,
-                  r"\1\n            signingConfig signingConfigs.release",
-                  text,
-                  count=1
-              )
-
-              if count == 0:
-                  raise SystemExit(
-                      "Could not find release build type in build.gradle"
-                  )
-
-          # ---------------------------------------------------------
-          # 3. Set PocketRule version
-          # ---------------------------------------------------------
-
-          version_code = "11705"
-          version_name = "1.17.5"
-
-          default_config_pattern = r"(defaultConfig\s*\{)"
-
-          match = re.search(default_config_pattern, text)
-
-          if not match:
-              raise SystemExit(
-                  "Could not find defaultConfig in build.gradle"
-              )
-
-          # Replace existing versionCode if present
-          if re.search(r"versionCode\s+\d+", text):
-              text = re.sub(
-                  r"versionCode\s+\d+",
-                  f"versionCode {version_code}",
-                  text,
-                  count=1
-              )
-          else:
-              position = match.end()
-              text = (
-                  text[:position]
-                  + f"\n        versionCode {version_code}"
-                  + text[position:]
-              )
-
-          # Replace existing versionName if present
-          if re.search(r'versionName\s+["\'][^"\']+["\']', text):
-              text = re.sub(
-                  r'versionName\s+["\'][^"\']+["\']',
-                  f'versionName "{version_name}"',
-                  text,
-                  count=1
-              )
-          else:
-              default_match = re.search(
-                  default_config_pattern,
-                  text
-              )
-
-              position = default_match.end()
-
-              text = (
-                  text[:position]
-                  + f'\n        versionName "{version_name}"'
-                  + text[position:]
-              )
-
-          path.write_text(text)
-
-          print("Android release configuration prepared.")
-          PY
-
-      - name: Build release AAB
-        working-directory: android
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          chmod +x gradlew
-          ./gradlew clean
-          ./gradlew bundleRelease
-
-      - name: Verify AAB
-        run: |
-          AAB="android/app/build/outputs/bundle/release/app-release.aab"
-
-          if [ ! -f "$AAB" ]; then
-            echo "ERROR: Release AAB was not created."
-            exit 1
-          fi
-
-          echo "PocketRule AAB successfully created:"
-          ls -lh "$AAB"
-
-      - name: Upload PocketRule AAB
-        uses: actions/upload-artifact@v4
-        with:
-          name: PocketRule-AAB-1.17.5-${{ github.run_number }}
-          path: android/app/build/outputs/bundle/release/app-release.aab
-          if-no-files-found: error
-          retention-days: 30
+      # --------------------------------------------------
+      # 19. Cleanup signing material
+      # --------------------------------------------------
 
       - name: Cleanup signing material
         if: always()
         run: |
           rm -f android/upload-keystore.jks
+
+          test ! -f android/upload-keystore.jks || {
+            echo "ERROR: Keystore cleanup failed."
+            exit 1
+          }
+
+          echo "Temporary signing material removed."
