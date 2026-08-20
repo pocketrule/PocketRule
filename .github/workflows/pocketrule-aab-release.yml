@@ -42,7 +42,7 @@ jobs:
 
 
       # ==================================================
-      # 4. INSTALL REQUIRED CAPACITOR PACKAGES
+      # 4. INSTALL CAPACITOR PACKAGES
       # ==================================================
 
       - name: Install Capacitor packages
@@ -58,9 +58,8 @@ jobs:
       # ==================================================
       # 5. SECURITY AUDIT
       # ==================================================
-      # Audit warnings must NOT prevent the Android build.
-      # Some Capacitor development dependencies currently
-      # report vulnerabilities with no available fix.
+      # Do not stop the production build because of
+      # development dependency vulnerabilities.
 
       - name: Security audit
         continue-on-error: true
@@ -68,7 +67,7 @@ jobs:
 
 
       # ==================================================
-      # 6. BUILD POCKETRULE WEB APP
+      # 6. BUILD WEB APP
       # ==================================================
 
       - name: Build PocketRule
@@ -94,7 +93,7 @@ jobs:
 
 
       # ==================================================
-      # 9. ADD ANDROID NOTIFICATION PERMISSION
+      # 9. ADD NOTIFICATION PERMISSION
       # ==================================================
 
       - name: Add Android notification permission
@@ -197,7 +196,7 @@ jobs:
 
 
       # ==================================================
-      # 13. DECODE ORIGINAL UPLOAD KEYSTORE
+      # 13. DECODE ORIGINAL KEYSTORE
       # ==================================================
 
       - name: Decode upload keystore
@@ -233,11 +232,11 @@ jobs:
             -list \
             -keystore android/upload-keystore-original \
             -storepass "$KEYSTORE_PASSWORD" \
-            > /tmp/keystore-list.txt
+            > /tmp/original-keystore.txt
 
           echo "Original keystore verified successfully."
 
-          cat /tmp/keystore-list.txt
+          cat /tmp/original-keystore.txt
 
 
       # ==================================================
@@ -279,10 +278,10 @@ jobs:
 
 
       # ==================================================
-      # 16. VERIFY PRIVATE KEY PASSWORD
+      # 16. VERIFY ORIGINAL PRIVATE KEY PASSWORD
       # ==================================================
 
-      - name: Verify private key password
+      - name: Verify original private key password
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
@@ -290,7 +289,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Testing private key password..."
+          echo "Testing original private key password..."
 
           keytool \
             -certreq \
@@ -299,12 +298,12 @@ jobs:
             -storetype "$KEYSTORE_TYPE" \
             -storepass "$KEYSTORE_PASSWORD" \
             -keypass "$KEY_PASSWORD" \
-            -file /tmp/pocketrule-test.csr \
-            > /tmp/key-test.txt 2>&1
+            -file /tmp/original-test.csr \
+            > /tmp/private-key-test.txt 2>&1
 
-          rm -f /tmp/pocketrule-test.csr
+          rm -f /tmp/original-test.csr
 
-          echo "Private key password is valid."
+          echo "Original private key password is valid."
 
 
       # ==================================================
@@ -314,17 +313,24 @@ jobs:
       - name: Convert keystore to JKS
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           set -euo pipefail
+
+          echo "Converting keystore to JKS..."
+
+          rm -f android/upload-keystore.jks
 
           keytool \
             -importkeystore \
             -srckeystore android/upload-keystore-original \
             -srcstoretype "$KEYSTORE_TYPE" \
             -srcstorepass "$KEYSTORE_PASSWORD" \
+            -srckeypass "$KEY_PASSWORD" \
             -destkeystore android/upload-keystore.jks \
             -deststoretype JKS \
             -deststorepass "$KEYSTORE_PASSWORD" \
+            -destkeypass "$KEY_PASSWORD" \
             -noprompt
 
           test -s android/upload-keystore.jks || {
@@ -334,7 +340,7 @@ jobs:
 
           chmod 600 android/upload-keystore.jks
 
-          echo "Keystore converted to JKS successfully."
+          echo "JKS conversion completed successfully."
 
 
       # ==================================================
@@ -344,19 +350,40 @@ jobs:
       - name: Verify converted JKS
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           set -euo pipefail
 
+          echo "Verifying converted JKS..."
+
           keytool \
             -list \
+            -v \
             -storetype JKS \
             -keystore android/upload-keystore.jks \
             -storepass "$KEYSTORE_PASSWORD" \
             > /tmp/jks-list.txt
 
-          echo "Converted JKS verified successfully."
+          echo "JKS contents:"
+          grep -E "Alias name:|Entry type:" /tmp/jks-list.txt || true
 
-          cat /tmp/jks-list.txt
+          echo "Testing converted private key..."
+
+          keytool \
+            -certreq \
+            -alias "$KEY_ALIAS" \
+            -keystore android/upload-keystore.jks \
+            -storetype JKS \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -keypass "$KEY_PASSWORD" \
+            -file /tmp/converted-test.csr
+
+          rm -f /tmp/converted-test.csr
+
+          echo "========================================"
+          echo "Converted JKS private key verified."
+          echo "========================================"
 
 
       # ==================================================
@@ -382,10 +409,7 @@ jobs:
 
           text = path.read_text()
 
-          # ------------------------------------------------
-          # Remove existing signingConfigs blocks.
-          # ------------------------------------------------
-
+          # Remove previously generated signingConfigs.
           text = re.sub(
               r'\n\s*signingConfigs\s*\{.*?\n\s*\}',
               '',
@@ -393,10 +417,7 @@ jobs:
               flags=re.DOTALL
           )
 
-          # ------------------------------------------------
-          # Add clean release signing configuration.
-          # ------------------------------------------------
-
+          # Clean release signing configuration.
           signing_config = """
               signingConfigs {
                   release {
@@ -421,7 +442,7 @@ jobs:
           )
 
           # ------------------------------------------------
-          # Set PocketRule version.
+          # PocketRule version
           # ------------------------------------------------
 
           version_code = "11706"
@@ -455,7 +476,7 @@ jobs:
               )
 
           # ------------------------------------------------
-          # Attach signing configuration to release.
+          # Attach signing configuration to release build
           # ------------------------------------------------
 
           release_pattern = (
@@ -490,111 +511,4 @@ jobs:
 
 
       # ==================================================
-      # 20. BUILD SIGNED PRODUCTION AAB
-      # ==================================================
-
-      - name: Build signed release AAB
-        working-directory: android
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-
-          chmod +x gradlew
-
-          ./gradlew clean
-
-          ./gradlew bundleRelease
-
-
-      # ==================================================
-      # 21. VERIFY AAB EXISTS
-      # ==================================================
-
-      - name: Verify AAB
-        run: |
-          set -euo pipefail
-
-          AAB="android/app/build/outputs/bundle/release/app-release.aab"
-
-          if [ ! -f "$AAB" ]; then
-            echo "ERROR: Release AAB was not created."
-            exit 1
-          fi
-
-          if [ ! -s "$AAB" ]; then
-            echo "ERROR: Release AAB is empty."
-            exit 1
-          fi
-
-          echo "========================================"
-          echo "PocketRule AAB successfully created!"
-          echo "========================================"
-
-          ls -lh "$AAB"
-
-
-      # ==================================================
-      # 22. VERIFY AAB SIGNATURE
-      # ==================================================
-
-      - name: Verify AAB signing
-        run: |
-          set -euo pipefail
-
-          AAB="android/app/build/outputs/bundle/release/app-release.aab"
-
-          if [ ! -f "$AAB" ]; then
-            echo "ERROR: AAB not found."
-            exit 1
-          fi
-
-          jarsigner \
-            -verify \
-            -verbose \
-            "$AAB" \
-            > /tmp/jarsigner-output.txt 2>&1
-
-          cat /tmp/jarsigner-output.txt
-
-          echo "========================================"
-          echo "AAB signature verification completed."
-          echo "========================================"
-
-
-      # ==================================================
-      # 23. UPLOAD PRODUCTION AAB
-      # ==================================================
-
-      - name: Upload PocketRule AAB
-        uses: actions/upload-artifact@v4
-        with:
-          name: PocketRule-AAB-1.17.6-${{ github.run_number }}
-          path: android/app/build/outputs/bundle/release/app-release.aab
-          if-no-files-found: error
-          retention-days: 30
-
-
-      # ==================================================
-      # 24. CLEANUP SIGNING MATERIAL
-      # ==================================================
-
-      - name: Cleanup signing material
-        if: always()
-        run: |
-          rm -f android/upload-keystore-original
-          rm -f android/upload-keystore.jks
-
-          if [ -f android/upload-keystore-original ]; then
-            echo "ERROR: Original keystore cleanup failed."
-            exit 1
-          fi
-
-          if [ -f android/upload-keystore.jks ]; then
-            echo "ERROR: JKS keystore cleanup failed."
-            exit 1
-          fi
-
-          echo "Temporary signing material removed."
+      # 
