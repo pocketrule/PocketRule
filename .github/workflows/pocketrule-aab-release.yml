@@ -129,7 +129,11 @@ jobs:
                   "ERROR: Could not find Android manifest root."
               )
 
-          missing = [permission for permission in permissions if permission not in text]
+          missing = [
+              permission
+              for permission in permissions
+              if permission not in text
+          ]
 
           if missing:
               text = text.replace(
@@ -140,7 +144,9 @@ jobs:
 
               manifest.write_text(text)
 
-          print("Android notification + exact-alarm permissions configured.")
+          print(
+              "Android notification + exact-alarm permissions configured."
+          )
           PY
 
 
@@ -477,9 +483,14 @@ jobs:
               1
           )
 
-          # PocketRule version
-          version_code = "11706"
-          version_name = "1.17.6"
+          # ========================================================
+          # POCKETRULE RELEASE VERSION
+          # Google Play currently has version code 11706.
+          # The next version must therefore be greater than 11706.
+          # ========================================================
+
+          version_code = "11707"
+          version_name = "1.17.7"
 
           if re.search(r"versionCode\s+\d+", text):
               text = re.sub(
@@ -532,6 +543,8 @@ jobs:
           path.write_text(text)
 
           print("Android release signing configured.")
+          print(f"Version name: {version_name}")
+          print(f"Version code: {version_code}")
           PY
 
 
@@ -556,6 +569,13 @@ jobs:
 
           grep -n \
             "signingConfig signingConfigs.release" \
+            android/app/build.gradle
+
+          echo ""
+          echo "Checking version..."
+
+          grep -n \
+            -E "versionCode|versionName" \
             android/app/build.gradle
 
 
@@ -640,7 +660,7 @@ jobs:
       - name: Upload PocketRule AAB
         uses: actions/upload-artifact@v4
         with:
-          name: PocketRule-AAB-1.17.6-${{ github.run_number }}
+          name: PocketRule-AAB-1.17.7-${{ github.run_number }}
           path: android/app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error
           retention-days: 30
