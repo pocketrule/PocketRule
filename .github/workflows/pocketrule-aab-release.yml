@@ -66,7 +66,49 @@ jobs:
 
 
       # ============================================================
-      # 6. BUILD POCKETRULE WEB APP
+      # 6. SYNCHRONIZE POCKETRULE VERSION
+      # ============================================================
+
+      - name: Set PocketRule app version
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import re
+
+          version = "1.17.8"
+
+          package = Path("package.json")
+          app = Path("App.jsx")
+
+          data = json.loads(package.read_text())
+          data["version"] = version
+          package.write_text(json.dumps(data, indent=2) + "\n")
+
+          text = app.read_text()
+
+          updated, count = re.subn(
+              r'const APP_VERSION\s*=\s*["\'][^"\']+["\'];',
+              f'const APP_VERSION = "{version}";',
+              text,
+              count=1,
+          )
+
+          if count != 1:
+              raise SystemExit(
+                  "ERROR: APP_VERSION was not found exactly once in App.jsx"
+              )
+
+          app.write_text(updated)
+
+          print(
+              f"PocketRule app version synchronized to {version}"
+          )
+          PY
+
+
+      # ============================================================
+      # 7. BUILD POCKETRULE WEB APP
       # ============================================================
 
       - name: Build PocketRule
@@ -74,7 +116,7 @@ jobs:
 
 
       # ============================================================
-      # 7. ADD ANDROID PLATFORM
+      # 8. ADD ANDROID PLATFORM
       # ============================================================
 
       - name: Add Android platform
@@ -82,17 +124,17 @@ jobs:
 
 
       # ============================================================
-      # 8. GENERATE ANDROID ASSETS
+      # 9. GENERATE ANDROID ASSETS
       # ============================================================
 
       - name: Generate Android assets
         run: |
-          npm install --save-dev @capacitor/assets
+          npm install --save-dev @capacitor/assets@3.0.4
           npx @capacitor/assets generate --android
 
 
       # ============================================================
-      # 9. ANDROID NOTIFICATION PERMISSIONS
+      # 10. ADD ANDROID NOTIFICATION PERMISSION
       # ============================================================
 
       - name: Add Android notification permission
@@ -111,7 +153,10 @@ jobs:
 
           text = manifest.read_text()
 
-          marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+          marker = (
+              '<manifest '
+              'xmlns:android="http://schemas.android.com/apk/res/android">'
+          )
 
           if marker not in text:
               raise SystemExit(
@@ -132,20 +177,22 @@ jobs:
           if missing:
               text = text.replace(
                   marker,
-                  marker + "\n    " + "\n    ".join(missing),
-                  1
+                  marker
+                  + "\n    "
+                  + "\n    ".join(missing),
+                  1,
               )
 
               manifest.write_text(text)
 
           print(
-              "Android notification and exact-alarm permissions configured."
+              "Android notification/exact-alarm permissions configured."
           )
           PY
 
 
       # ============================================================
-      # 10. SYNC CAPACITOR
+      # 11. SYNC CAPACITOR
       # ============================================================
 
       - name: Sync Capacitor
@@ -153,7 +200,7 @@ jobs:
 
 
       # ============================================================
-      # 11. SETUP JAVA
+      # 12. SETUP JAVA
       # ============================================================
 
       - name: Setup Java
@@ -164,7 +211,7 @@ jobs:
 
 
       # ============================================================
-      # 12. VALIDATE SIGNING SECRETS
+      # 13. VALIDATE SIGNING SECRETS
       # ============================================================
 
       - name: Validate signing secrets
@@ -200,7 +247,7 @@ jobs:
 
 
       # ============================================================
-      # 13. DECODE ORIGINAL KEYSTORE
+      # 14. DECODE ORIGINAL KEYSTORE
       # ============================================================
 
       - name: Decode upload keystore
@@ -210,7 +257,8 @@ jobs:
           set -euo pipefail
 
           printf '%s' "$ANDROID_KEYSTORE_BASE64" \
-            | base64 --decode > android/upload-keystore-original
+            | base64 --decode \
+            > android/upload-keystore-original
 
           test -s android/upload-keystore-original || {
             echo "ERROR: Keystore decoding failed."
@@ -223,32 +271,452 @@ jobs:
 
 
       # ============================================================
-      # 14. DETECT KEYSTORE TYPE
+      # 15. DETECT KEYSTORE TYPE
       # ============================================================
 
       - name: Detect keystore type
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import subprocess
+
+          keystore = Path(
+              "android/upload-keystore-original"
+          )
+
+          password = os.environ["KEYSTORE_PASSWORD"]
+
+          if (
+              not keystore.exists()
+              or keystore.stat().st_size == 0
+          ):
+              raise SystemExit(
+                  "ERROR: Original keystore is missing or empty."
+              )
+
+          detected = None
+
+          for store_type in ("PKCS12", "JKS"):
+
+              result = subprocess.run(
+                  [
+                      "keytool",
+                      "-list",
+                      "-storetype",
+                      store_type,
+                      "-keystore",
+                      str(keystore),
+                      "-storepass",
+                      password,
+                  ],
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+                  text=True,
+              )
+
+              if result.returncode == 0:
+                  detected = store_type
+                  break
+
+          if detected is None:
+              print("ERROR: Could not identify keystore type.")
+              print("")
+              print("PKCS12/JKS detection failed.")
+              print(result.stderr)
+
+              raise SystemExit(1)
+
+          with open(
+              os.environ["GITHUB_ENV"],
+              "a"
+          ) as env_file:
+              env_file.write(
+                  f"KEYSTORE_TYPE={detected}\n"
+              )
+
+          print(
+              f"Detected keystore type: {detected}"
+          )
+          PY
+
+
+      # ============================================================
+      # 16. VERIFY ORIGINAL KEYSTORE
+      # ============================================================
+
+      - name: Verify original keystore
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
           set -euo pipefail
 
-          echo "Detecting keystore type..."
+          keytool \
+            -list \
+            -v \
+            -storetype "$KEYSTORE_TYPE" \
+            -keystore android/upload-keystore-original \
+            -storepass "$KEYSTORE_PASSWORD" \
+            > /tmp/original-keystore.txt
 
-          if keytool \
-              -list \
-              -storetype PKCS12 \
-              -keystore android/upload-keystore-original \
-              -storepass "$KEYSTORE_PASSWORD" \
-              > /tmp/pkcs12-test.txt 2>&1; then
+          if ! grep -Fq \
+            "Alias name: $KEY_ALIAS" \
+            /tmp/original-keystore.txt
+          then
+            echo "ERROR: KEY_ALIAS was not found."
 
-            echo "KEYSTORE_TYPE=PKCS12" >> "$GITHUB_ENV"
-            echo "Detected keystore type: PKCS12"
+            echo "Available aliases:"
 
-          elif keytool \
-              -list \
-              -storetype JKS \
-              -keystore android/upload-keystore-original \
-              -storepass "$KEYSTORE_PASSWORD" \
-              > /tmp/jks-test.txt 2>&1; then
+            grep \
+              "Alias name:" \
+              /tmp/original-keystore.txt \
+              || true
 
-            echo
+            exit 1
+          fi
+
+          echo "Keystore and alias verified."
+
+
+      # ============================================================
+      # 17. VERIFY ORIGINAL PRIVATE KEY
+      # ============================================================
+
+      - name: Verify original private key
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+
+          keytool \
+            -certreq \
+            -alias "$KEY_ALIAS" \
+            -keystore android/upload-keystore-original \
+            -storetype "$KEYSTORE_TYPE" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -keypass "$KEY_PASSWORD" \
+            -file /tmp/private-key-test.csr
+
+          rm -f /tmp/private-key-test.csr
+
+          echo "Private key verified successfully."
+
+
+      # ============================================================
+      # 18. PREPARE JKS SIGNING KEYSTORE
+      # ============================================================
+
+      - name: Prepare JKS signing keystore
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import shutil
+          import subprocess
+
+          source = Path(
+              "android/upload-keystore-original"
+          )
+
+          destination = Path(
+              "android/upload-keystore.jks"
+          )
+
+          store_type = os.environ[
+              "KEYSTORE_TYPE"
+          ]
+
+          store_password = os.environ[
+              "KEYSTORE_PASSWORD"
+          ]
+
+          key_password = os.environ[
+              "KEY_PASSWORD"
+          ]
+
+          alias = os.environ[
+              "KEY_ALIAS"
+          ]
+
+          destination.unlink(
+              missing_ok=True
+          )
+
+          if store_type == "JKS":
+
+              print(
+                  "Original keystore is already JKS."
+              )
+
+              shutil.copy2(
+                  source,
+                  destination
+              )
+
+          elif store_type == "PKCS12":
+
+              print(
+                  "Original keystore is PKCS12."
+              )
+
+              print(
+                  "Converting PKCS12 to JKS..."
+              )
+
+              subprocess.run(
+                  [
+                      "keytool",
+                      "-importkeystore",
+                      "-srckeystore",
+                      str(source),
+                      "-srcstoretype",
+                      "PKCS12",
+                      "-srcstorepass",
+                      store_password,
+                      "-srcalias",
+                      alias,
+                      "-destkeystore",
+                      str(destination),
+                      "-deststoretype",
+                      "JKS",
+                      "-deststorepass",
+                      store_password,
+                      "-destkeypass",
+                      key_password,
+                      "-destalias",
+                      alias,
+                      "-noprompt",
+                  ],
+                  check=True,
+              )
+
+          else:
+
+              raise SystemExit(
+                  f"ERROR: Unsupported keystore type: {store_type}"
+              )
+
+          if (
+              not destination.exists()
+              or destination.stat().st_size == 0
+          ):
+              raise SystemExit(
+                  "ERROR: JKS signing keystore was not created."
+              )
+
+          destination.chmod(0o600)
+
+          print(
+              "JKS signing keystore prepared."
+          )
+          PY
+
+
+      # ============================================================
+      # 19. VERIFY JKS SIGNING KEYSTORE
+      # ============================================================
+
+      - name: Verify JKS signing keystore
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+
+          keytool \
+            -list \
+            -v \
+            -storetype JKS \
+            -keystore android/upload-keystore.jks \
+            -storepass "$KEYSTORE_PASSWORD" \
+            > /tmp/jks-info.txt
+
+          if ! grep -Fq \
+            "Alias name: $KEY_ALIAS" \
+            /tmp/jks-info.txt
+          then
+            echo "ERROR: Alias was not found in converted JKS."
+
+            grep \
+              "Alias name:" \
+              /tmp/jks-info.txt \
+              || true
+
+            exit 1
+          fi
+
+          keytool \
+            -certreq \
+            -alias "$KEY_ALIAS" \
+            -keystore android/upload-keystore.jks \
+            -storetype JKS \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -keypass "$KEY_PASSWORD" \
+            -file /tmp/jks-private-key-test.csr
+
+          rm -f /tmp/jks-private-key-test.csr
+
+          echo "JKS and private key verified successfully."
+
+
+      # ============================================================
+      # 20. CONFIGURE ANDROID RELEASE SIGNING + VERSION
+      # ============================================================
+
+      - name: Configure Android release signing and version
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path(
+              "android/app/build.gradle"
+          )
+
+          text = path.read_text()
+
+          if "android {" not in text:
+              raise SystemExit(
+                  "ERROR: Could not find android {} block."
+              )
+
+          # --------------------------------------------------------
+          # SIGNING CONFIG
+          # --------------------------------------------------------
+
+          if "signingConfigs {" not in text:
+
+              signing_config = '''
+              signingConfigs {
+                  release {
+                      storeFile file("../upload-keystore.jks")
+                      storeType "JKS"
+                      storePassword System.getenv("KEYSTORE_PASSWORD")
+                      keyAlias System.getenv("KEY_ALIAS")
+                      keyPassword System.getenv("KEY_PASSWORD")
+                  }
+              }
+          '''
+
+              text = text.replace(
+                  "android {",
+                  "android {" + signing_config,
+                  1,
+              )
+
+          # --------------------------------------------------------
+          # VERSION
+          # --------------------------------------------------------
+
+          version_code = "11708"
+          version_name = "1.17.8"
+
+          if not re.search(
+              r"versionCode\s+\d+",
+              text
+          ):
+              raise SystemExit(
+                  "ERROR: versionCode was not found."
+              )
+
+          text = re.sub(
+              r"versionCode\s+\d+",
+              f"versionCode {version_code}",
+              text,
+              count=1,
+          )
+
+          if not re.search(
+              r'versionName\s+["\'][^"\']+["\']',
+              text
+          ):
+              raise SystemExit(
+                  "ERROR: versionName was not found."
+              )
+
+          text = re.sub(
+              r'versionName\s+["\'][^"\']+["\']',
+              f'versionName "{version_name}"',
+              text,
+              count=1,
+          )
+
+          # --------------------------------------------------------
+          # RELEASE SIGNING
+          # --------------------------------------------------------
+
+          if (
+              "signingConfig signingConfigs.release"
+              not in text
+          ):
+
+              release_pattern = (
+                  r'(buildTypes\s*\{\s*release\s*\{)'
+              )
+
+              if not re.search(
+                  release_pattern,
+                  text
+              ):
+                  raise SystemExit(
+                      "ERROR: release build type was not found."
+                  )
+
+              text = re.sub(
+                  release_pattern,
+                  r'\1\n'
+                  r'            signingConfig signingConfigs.release',
+                  text,
+                  count=1,
+              )
+
+          path.write_text(text)
+
+          print(
+              "Android release signing configured."
+          )
+
+          print(
+              "versionName: 1.17.8"
+          )
+
+          print(
+              "versionCode: 11708"
+          )
+          PY
+
+
+      # ============================================================
+      # 21. VERIFY SIGNING + VERSION BEFORE BUILD
+      # ============================================================
+
+      - name: Verify Android signing and version configuration
+        run: |
+          set -euo pipefail
+
+          echo "Checking release signing..."
+
+          grep \
+            -n \
+            "signingConfig signingConfigs.release" \
+            android/app/build.gradle
+
+          echo ""
+          echo "Checking Android version..."
+
+          grep \
+            
