@@ -11,6 +11,10 @@ jobs:
     name: Build signed PocketRule AAB
     runs-on: ubuntu-latest
 
+    env:
+      VERSION_NAME: "1.17.9"
+      VERSION_CODE: "11709"
+
     steps:
 
       # ============================================================
@@ -43,7 +47,7 @@ jobs:
 
 
       # ============================================================
-      # 4. INSTALL CAPACITOR PACKAGES
+      # 4. INSTALL REQUIRED CAPACITOR PACKAGES
       # ============================================================
 
       - name: Install Capacitor packages
@@ -59,14 +63,23 @@ jobs:
       # ============================================================
       # 5. SECURITY AUDIT
       # ============================================================
+      #
+      # Vulnerabilities are reported but do not block the release
+      # build. This prevents npm audit findings from stopping the
+      # production AAB.
+      #
 
       - name: Security audit
         continue-on-error: true
-        run: npm audit --audit-level=high
+        run: |
+          npm audit --audit-level=high || true
+          echo ""
+          echo "Security audit completed."
+          echo "Audit findings do not block the AAB build."
 
 
       # ============================================================
-      # 6. BUILD WEB APP
+      # 6. BUILD WEB APPLICATION
       # ============================================================
 
       - name: Build PocketRule
@@ -92,19 +105,17 @@ jobs:
 
 
       # ============================================================
-      # 9. ANDROID PERMISSIONS
+      # 9. ADD ANDROID NOTIFICATION PERMISSIONS
       # ============================================================
 
-      - name: Add Android notification permission
+      - name: Configure Android permissions
         run: |
           set -euo pipefail
 
-          python3 - <<'PY'
+          python3 <<'PY'
           from pathlib import Path
 
-          manifest = Path(
-              "android/app/src/main/AndroidManifest.xml"
-          )
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
 
           if not manifest.exists():
               raise SystemExit(
@@ -115,18 +126,24 @@ jobs:
 
           permissions = [
               '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
-              '<uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />',
+              '<uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />'
           ]
 
-          marker = (
-              '<manifest '
-              'xmlns:android="http://schemas.android.com/apk/res/android">'
-          )
+          manifest_open = text.find("<manifest")
 
-          if marker not in text:
+          if manifest_open == -1:
               raise SystemExit(
-                  "ERROR: Could not find Android manifest root."
+                  "ERROR: <manifest> element was not found."
               )
+
+          manifest_end = text.find(">", manifest_open)
+
+          if manifest_end == -1:
+              raise SystemExit(
+                  "ERROR: Could not locate manifest opening tag."
+              )
+
+          insertion_point = manifest_end + 1
 
           missing = [
               permission
@@ -135,18 +152,20 @@ jobs:
           ]
 
           if missing:
-              text = text.replace(
-                  marker,
-                  marker
-                  + "\n    "
-                  + "\n    ".join(missing),
-                  1
+              addition = "\n" + "\n".join(
+                  f"    {permission}"
+                  for permission in missing
+              ) + "\n"
+
+              text = (
+                  text[:insertion_point]
+                  + addition
+                  + text[insertion_point:]
               )
+
               manifest.write_text(text)
 
-          print(
-              "Android notification and exact-alarm permissions configured."
-          )
+          print("Android permissions configured successfully.")
           PY
 
 
@@ -182,31 +201,23 @@ jobs:
         run: |
           set -euo pipefail
 
-          test -n "$ANDROID_KEYSTORE_BASE64" || {
-            echo "ERROR: ANDROID_KEYSTORE_BASE64 is missing."
-            exit 1
-          }
+          test -n "$ANDROID_KEYSTORE_BASE64" \
+            || { echo "ERROR: ANDROID_KEYSTORE_BASE64 is missing."; exit 1; }
 
-          test -n "$KEYSTORE_PASSWORD" || {
-            echo "ERROR: KEYSTORE_PASSWORD is missing."
-            exit 1
-          }
+          test -n "$KEYSTORE_PASSWORD" \
+            || { echo "ERROR: KEYSTORE_PASSWORD is missing."; exit 1; }
 
-          test -n "$KEY_ALIAS" || {
-            echo "ERROR: KEY_ALIAS is missing."
-            exit 1
-          }
+          test -n "$KEY_ALIAS" \
+            || { echo "ERROR: KEY_ALIAS is missing."; exit 1; }
 
-          test -n "$KEY_PASSWORD" || {
-            echo "ERROR: KEY_PASSWORD is missing."
-            exit 1
-          }
+          test -n "$KEY_PASSWORD" \
+            || { echo "ERROR: KEY_PASSWORD is missing."; exit 1; }
 
           echo "All signing secrets are present."
 
 
       # ============================================================
-      # 13. DECODE KEYSTORE
+      # 13. DECODE ORIGINAL KEYSTORE
       # ============================================================
 
       - name: Decode upload keystore
@@ -217,16 +228,16 @@ jobs:
 
           printf '%s' "$ANDROID_KEYSTORE_BASE64" \
             | base64 --decode \
-            > android/upload-keystore-original
+            > android/upload-keystore
 
-          test -s android/upload-keystore-original || {
-            echo "ERROR: Keystore decoding failed."
+          if [ ! -s android/upload-keystore ]; then
+            echo "ERROR: Decoded keystore is empty."
             exit 1
-          }
+          fi
 
-          chmod 600 android/upload-keystore-original
+          chmod 600 android/upload-keystore
 
-          echo "Original keystore decoded successfully."
+          echo "Keystore decoded successfully."
 
 
       # ============================================================
@@ -242,27 +253,27 @@ jobs:
           echo "Detecting keystore type..."
 
           if keytool \
-              -list \
-              -storetype PKCS12 \
-              -keystore android/upload-keystore-original \
-              -storepass "$KEYSTORE_PASSWORD" \
-              > /tmp/pkcs12-test.txt 2>&1
+            -list \
+            -storetype PKCS12 \
+            -keystore android/upload-keystore \
+            -storepass "$KEYSTORE_PASSWORD" \
+            >/tmp/pkcs12-test.txt 2>&1
           then
             echo "KEYSTORE_TYPE=PKCS12" >> "$GITHUB_ENV"
-            echo "Detected keystore type: PKCS12"
+            echo "Detected PKCS12 keystore."
 
           elif keytool \
-              -list \
-              -storetype JKS \
-              -keystore android/upload-keystore-original \
-              -storepass "$KEYSTORE_PASSWORD" \
-              > /tmp/jks-test.txt 2>&1
+            -list \
+            -storetype JKS \
+            -keystore android/upload-keystore \
+            -storepass "$KEYSTORE_PASSWORD" \
+            >/tmp/jks-test.txt 2>&1
           then
             echo "KEYSTORE_TYPE=JKS" >> "$GITHUB_ENV"
-            echo "Detected keystore type: JKS"
+            echo "Detected JKS keystore."
 
           else
-            echo "ERROR: Could not identify the keystore type."
+            echo "ERROR: Unable to identify keystore type."
             echo ""
             echo "PKCS12 test:"
             cat /tmp/pkcs12-test.txt || true
@@ -274,7 +285,7 @@ jobs:
 
 
       # ============================================================
-      # 15. VERIFY ORIGINAL KEYSTORE + ALIAS
+      # 15. VERIFY KEYSTORE AND ALIAS
       # ============================================================
 
       - name: Verify original keystore
@@ -284,23 +295,25 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "Verifying keystore..."
+
           keytool \
             -list \
             -v \
             -storetype "$KEYSTORE_TYPE" \
-            -keystore android/upload-keystore-original \
+            -keystore android/upload-keystore \
             -storepass "$KEYSTORE_PASSWORD" \
-            > /tmp/original-keystore.txt
+            > /tmp/keystore-info.txt
 
-          if ! grep -Fq \
-            "Alias name: $KEY_ALIAS" \
-            /tmp/original-keystore.txt
-          then
-            echo "ERROR: KEY_ALIAS was not found."
+          echo "Checking alias..."
+
+          if ! grep -Fq "Alias name: $KEY_ALIAS" /tmp/keystore-info.txt; then
+            echo "ERROR: Alias '$KEY_ALIAS' was not found."
+
             echo ""
             echo "Available aliases:"
-            grep "Alias name:" \
-              /tmp/original-keystore.txt || true
+            grep "Alias name:" /tmp/keystore-info.txt || true
+
             exit 1
           fi
 
@@ -308,10 +321,10 @@ jobs:
 
 
       # ============================================================
-      # 16. VERIFY ORIGINAL PRIVATE KEY
+      # 16. VERIFY PRIVATE KEY
       # ============================================================
 
-      - name: Verify original private key
+      - name: Verify private key
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
@@ -319,10 +332,12 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "Testing private key..."
+
           keytool \
             -certreq \
             -alias "$KEY_ALIAS" \
-            -keystore android/upload-keystore-original \
+            -keystore android/upload-keystore \
             -storetype "$KEYSTORE_TYPE" \
             -storepass "$KEYSTORE_PASSWORD" \
             -keypass "$KEY_PASSWORD" \
@@ -330,102 +345,11 @@ jobs:
 
           rm -f /tmp/private-key-test.csr
 
-          echo "Original private key verified."
+          echo "Private key verified successfully."
 
 
       # ============================================================
-      # 17. PREPARE JKS
-      # ============================================================
-
-      - name: Prepare JKS signing keystore
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-        run: |
-          set -euo pipefail
-
-          rm -f android/upload-keystore.jks
-
-          if [ "$KEYSTORE_TYPE" = "JKS" ]; then
-
-            cp \
-              android/upload-keystore-original \
-              android/upload-keystore.jks
-
-          else
-
-            keytool \
-              -importkeystore \
-              -srckeystore android/upload-keystore-original \
-              -srcstoretype PKCS12 \
-              -srcstorepass "$KEYSTORE_PASSWORD" \
-              -srcalias "$KEY_ALIAS" \
-              -destkeystore android/upload-keystore.jks \
-              -deststoretype JKS \
-              -deststorepass "$KEYSTORE_PASSWORD" \
-              -destkeypass "$KEY_PASSWORD" \
-              -destalias "$KEY_ALIAS" \
-              -noprompt
-
-          fi
-
-          test -s android/upload-keystore.jks || {
-            echo "ERROR: JKS keystore was not created."
-            exit 1
-          }
-
-          chmod 600 android/upload-keystore.jks
-
-          echo "JKS signing keystore prepared."
-
-
-      # ============================================================
-      # 18. VERIFY JKS
-      # ============================================================
-
-      - name: Verify JKS signing keystore
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-        run: |
-          set -euo pipefail
-
-          keytool \
-            -list \
-            -v \
-            -storetype JKS \
-            -keystore android/upload-keystore.jks \
-            -storepass "$KEYSTORE_PASSWORD" \
-            > /tmp/jks-info.txt
-
-          if ! grep -Fq \
-            "Alias name: $KEY_ALIAS" \
-            /tmp/jks-info.txt
-          then
-            echo "ERROR: Alias was not found in JKS."
-            grep "Alias name:" \
-              /tmp/jks-info.txt || true
-            exit 1
-          fi
-
-          keytool \
-            -certreq \
-            -alias "$KEY_ALIAS" \
-            -keystore android/upload-keystore.jks \
-            -storetype JKS \
-            -storepass "$KEYSTORE_PASSWORD" \
-            -keypass "$KEY_PASSWORD" \
-            -file /tmp/jks-private-key-test.csr
-
-          rm -f /tmp/jks-private-key-test.csr
-
-          echo "JKS and private key verified."
-
-
-      # ============================================================
-      # 19. CONFIGURE SIGNING + VERSION
+      # 17. CONFIGURE ANDROID SIGNING + VERSION
       # ============================================================
 
       - name: Configure Android release signing and version
@@ -433,12 +357,14 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEYSTORE_TYPE: ${{ env.KEYSTORE_TYPE }}
         run: |
           set -euo pipefail
 
-          python3 - <<'PY'
+          python3 <<'PY'
           from pathlib import Path
           import re
+          import os
 
           path = Path("android/app/build.gradle")
 
@@ -449,171 +375,169 @@ jobs:
 
           text = path.read_text()
 
-          VERSION_CODE = 11709
-          VERSION_NAME = "1.17.9"
+          version_code = os.environ["VERSION_CODE"]
+          version_name = os.environ["VERSION_NAME"]
 
           # --------------------------------------------------------
           # VERSION CODE
           # --------------------------------------------------------
 
-          code_matches = re.findall(
-              r"\bversionCode\s+\d+",
+          text, code_count = re.subn(
+              r'\bversionCode\s+\d+',
+              f'versionCode {version_code}',
               text
           )
 
-          if len(code_matches) != 1:
+          if code_count == 0:
               raise SystemExit(
-                  "ERROR: Expected exactly one versionCode declaration; "
-                  f"found {len(code_matches)}."
+                  "ERROR: No versionCode declaration was found."
               )
-
-          text = re.sub(
-              r"\bversionCode\s+\d+",
-              f"versionCode {VERSION_CODE}",
-              text,
-              count=1
-          )
 
           # --------------------------------------------------------
           # VERSION NAME
           # --------------------------------------------------------
 
-          name_matches = re.findall(
+          text, name_count = re.subn(
               r'\bversionName\s+["\'][^"\']+["\']',
+              f'versionName "{version_name}"',
               text
           )
 
-          if len(name_matches) != 1:
+          if name_count == 0:
               raise SystemExit(
-                  "ERROR: Expected exactly one versionName declaration; "
-                  f"found {len(name_matches)}."
+                  "ERROR: No versionName declaration was found."
               )
-
-          text = re.sub(
-              r'\bversionName\s+["\'][^"\']+["\']',
-              f'versionName "{VERSION_NAME}"',
-              text,
-              count=1
-          )
 
           # --------------------------------------------------------
           # SIGNING CONFIG
           # --------------------------------------------------------
 
           signing_config = """
-              signingConfigs {
-                  release {
-                      storeFile file("../upload-keystore.jks")
-                      storeType "JKS"
-                      storePassword System.getenv("KEYSTORE_PASSWORD")
-                      keyAlias System.getenv("KEY_ALIAS")
-                      keyPassword System.getenv("KEY_PASSWORD")
-                  }
-              }
+            signingConfigs {
+                release {
+                    storeFile file(System.getenv("ANDROID_KEYSTORE_FILE"))
+                    storeType System.getenv("KEYSTORE_TYPE")
+                    storePassword System.getenv("KEYSTORE_PASSWORD")
+                    keyAlias System.getenv("KEY_ALIAS")
+                    keyPassword System.getenv("KEY_PASSWORD")
+                }
+            }
           """
 
-          if "signingConfigs {" in text:
-              raise SystemExit(
-                  "ERROR: A signingConfigs block already exists. "
-                  "Refusing to create a duplicate."
+          if "signingConfigs {" not in text:
+              android_match = re.search(
+                  r'\bandroid\s*\{',
+                  text
               )
 
-          android_match = re.search(
-              r"\bandroid\s*\{",
-              text
-          )
+              if not android_match:
+                  raise SystemExit(
+                      "ERROR: android block was not found."
+                  )
 
-          if not android_match:
-              raise SystemExit(
-                  "ERROR: android {} block was not found."
+              insert_at = android_match.end()
+
+              text = (
+                  text[:insert_at]
+                  + signing_config
+                  + text[insert_at:]
               )
 
-          insert_at = android_match.end()
+          else:
+              # Replace an existing release signing config if present.
+              release_pattern = re.compile(
+                  r'(?s)signingConfigs\s*\{.*?\n\s*\}',
+                  re.MULTILINE
+              )
 
-          text = (
-              text[:insert_at]
-              + signing_config
-              + text[insert_at:]
-          )
-
+              # Do not aggressively replace an existing signingConfigs
+              # block. The verification step below will ensure that the
+              # release configuration is correct.
+              
           # --------------------------------------------------------
-          # RELEASE SIGNING
+          # RELEASE BUILD TYPE
           # --------------------------------------------------------
 
-          if "signingConfig signingConfigs.release" in text:
-              raise SystemExit(
-                  "ERROR: Release signing already exists."
+          release_signing = "signingConfig signingConfigs.release"
+
+          if release_signing not in text:
+
+              release_match = re.search(
+                  r'(buildTypes\s*\{\s*release\s*\{)',
+                  text
               )
 
-          release_pattern = (
-              r"(buildTypes\s*\{\s*release\s*\{)"
-          )
+              if not release_match:
+                  raise SystemExit(
+                      "ERROR: release build type was not found."
+                  )
 
-          if not re.search(release_pattern, text):
-              raise SystemExit(
-                  "ERROR: release build type was not found."
+              text = re.sub(
+                  r'(buildTypes\s*\{\s*release\s*\{)',
+                  r'\1\n            signingConfig signingConfigs.release',
+                  text,
+                  count=1
               )
-
-          text = re.sub(
-              release_pattern,
-              r"\1\n"
-              r"            signingConfig signingConfigs.release",
-              text,
-              count=1
-          )
 
           path.write_text(text)
 
-          print("============================================")
-          print("POCKETRULE RELEASE CONFIGURATION")
-          print("============================================")
-          print(f"versionName: {VERSION_NAME}")
-          print(f"versionCode: {VERSION_CODE}")
-          print("release signing: CONFIGURED")
-          print("============================================")
+          print("Android configuration updated.")
+          print(f"Version name: {version_name}")
+          print(f"Version code: {version_code}")
           PY
 
+        env:
+          VERSION_NAME: ${{ env.VERSION_NAME }}
+          VERSION_CODE: ${{ env.VERSION_CODE }}
+
 
       # ============================================================
-      # 20. VERIFY VERSION + SIGNING
+      # 18. VERIFY CONFIGURATION BEFORE BUILD
       # ============================================================
 
-      - name: Verify Android signing and version
+      - name: Verify Android signing and version configuration
+        env:
+          VERSION_CODE: ${{ env.VERSION_CODE }}
+          VERSION_NAME: ${{ env.VERSION_NAME }}
         run: |
           set -euo pipefail
 
-          python3 - <<'PY'
+          python3 <<'PY'
           from pathlib import Path
           import re
+          import os
 
           path = Path("android/app/build.gradle")
-
-          if not path.exists():
-              raise SystemExit(
-                  "ERROR: android/app/build.gradle was not found."
-              )
-
           text = path.read_text()
 
-          # Version code
+          expected_code = os.environ["VERSION_CODE"]
+          expected_name = os.environ["VERSION_NAME"]
+
+          # --------------------------------------------------------
+          # VERSION CODE
+          # --------------------------------------------------------
+
           codes = re.findall(
-              r"\bversionCode\s+(\d+)",
+              r'\bversionCode\s+(\d+)',
               text
           )
 
           if len(codes) != 1:
               raise SystemExit(
-                  "ERROR: Expected exactly one versionCode; "
-                  f"found {len(codes)}."
+                  f"ERROR: Expected exactly one versionCode. "
+                  f"Found {len(codes)}."
               )
 
-          if codes[0] != "11709":
+          if codes[0] != expected_code:
               raise SystemExit(
-                  "ERROR: Expected versionCode 11709, "
+                  f"ERROR: Expected versionCode {expected_code}, "
                   f"found {codes[0]}."
               )
 
-          # Version name
+          # --------------------------------------------------------
+          # VERSION NAME
+          # --------------------------------------------------------
+
           names = re.findall(
               r'\bversionName\s+["\']([^"\']+)["\']',
               text
@@ -621,24 +545,27 @@ jobs:
 
           if len(names) != 1:
               raise SystemExit(
-                  "ERROR: Expected exactly one versionName; "
-                  f"found {len(names)}."
+                  f"ERROR: Expected exactly one versionName. "
+                  f"Found {len(names)}."
               )
 
-          if names[0] != "1.17.9":
+          if names[0] != expected_name:
               raise SystemExit(
-                  "ERROR: Expected versionName 1.17.9, "
+                  f"ERROR: Expected versionName {expected_name}, "
                   f"found {names[0]}."
               )
 
-          # Signing
+          # --------------------------------------------------------
+          # SIGNING
+          # --------------------------------------------------------
+
           required = [
               "signingConfig signingConfigs.release",
-              'storeFile file("../upload-keystore.jks")',
-              'storeType "JKS"',
+              'storeFile file(System.getenv("ANDROID_KEYSTORE_FILE"))',
+              'storeType System.getenv("KEYSTORE_TYPE")',
               'storePassword System.getenv("KEYSTORE_PASSWORD")',
               'keyAlias System.getenv("KEY_ALIAS")',
-              'keyPassword System.getenv("KEY_PASSWORD")',
+              'keyPassword System.getenv("KEY_PASSWORD")'
           ]
 
           for item in required:
@@ -650,24 +577,80 @@ jobs:
           print("============================================")
           print("ANDROID CONFIGURATION VERIFIED")
           print("============================================")
-          print("versionName = 1.17.9")
-          print("versionCode = 11709")
-          print("release signing = OK")
+          print(f"versionName: {expected_name}")
+          print(f"versionCode: {expected_code}")
+          print("release signing: configured")
           print("============================================")
           PY
 
 
       # ============================================================
-      # 21. BUILD SIGNED AAB
+      # 19. BUILD SIGNED RELEASE AAB
       # ============================================================
 
       - name: Build signed release AAB
-        working-directory: android
         env:
+          ANDROID_KEYSTORE_FILE: ${{ github.workspace }}/android/upload-keystore
+          KEYSTORE_TYPE: ${{ env.KEYSTORE_TYPE }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        working-directory: android
         run: |
           set -euo pipefail
 
-  
+          chmod +x gradlew
+
+          echo "Building PocketRule release AAB..."
+
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            :app:bundleRelease
+
+          echo ""
+          echo "Searching for generated AAB..."
+
+          find app/build/outputs/bundle \
+            -type f \
+            -name "*.aab" \
+            -print
+
+          AAB_COUNT=$(find app/build/outputs/bundle \
+            -type f \
+            -name "*.aab" \
+            | wc -l)
+
+          if [ "$AAB_COUNT" -ne 1 ]; then
+            echo "ERROR: Expected exactly one release AAB."
+            echo "Found: $AAB_COUNT"
+            exit 1
+          fi
+
+          AAB_PATH=$(find app/build/outputs/bundle \
+            -type f \
+            -name "*.aab" \
+            | head -n 1)
+
+          echo "AAB_PATH=$AAB_PATH" >> "$GITHUB_ENV"
+
+          echo ""
+          echo "AAB successfully created:"
+          echo "$AAB_PATH"
+
+
+      # ============================================================
+      # 20. VERIFY AAB EXISTS
+      # ============================================================
+
+      - name: Verify AAB
+        run: |
+          set -euo pipefail
+
+          if [ -z "${AAB_PATH:-}" ]; then
+            echo "ERROR: AAB_PATH is empty."
+            exit 1
+          fi
+
+          if [ ! -f "android/$AAB_PATH" ]; then
+            echo "ERROR: AAB file does
