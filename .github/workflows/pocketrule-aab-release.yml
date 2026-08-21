@@ -117,28 +117,30 @@ jobs:
 
           text = manifest.read_text()
 
-          permission = (
-              '<uses-permission '
-              'android:name="android.permission.POST_NOTIFICATIONS" />'
-          )
+          permissions = [
+              '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
+              '<uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />',
+          ]
 
-          if permission not in text:
-              marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+          marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
 
-              if marker not in text:
-                  raise SystemExit(
-                      "ERROR: Could not find Android manifest root."
-                  )
+          if marker not in text:
+              raise SystemExit(
+                  "ERROR: Could not find Android manifest root."
+              )
 
+          missing = [permission for permission in permissions if permission not in text]
+
+          if missing:
               text = text.replace(
                   marker,
-                  marker + "\n    " + permission,
+                  marker + "\n    " + "\n    ".join(missing),
                   1
               )
 
               manifest.write_text(text)
 
-          print("Android notification permission configured.")
+          print("Android notification + exact-alarm permissions configured.")
           PY
 
 
