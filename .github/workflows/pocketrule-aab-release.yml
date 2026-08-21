@@ -27,9 +27,6 @@ jobs:
       # 2. SETUP NODE
       # ============================================================
 
-      # No npm cache because the repository does not currently
-      # have a package-lock.json.
-
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
@@ -62,9 +59,6 @@ jobs:
       # ============================================================
       # 5. SECURITY AUDIT
       # ============================================================
-
-      # Audit vulnerabilities are reported but do not stop the
-      # production build.
 
       - name: Security audit
         continue-on-error: true
@@ -262,12 +256,15 @@ jobs:
 
           else
             echo "ERROR: Could not identify the keystore type."
+
             echo ""
             echo "PKCS12 test:"
             cat /tmp/pkcs12-test.txt || true
+
             echo ""
             echo "JKS test:"
             cat /tmp/jks-test.txt || true
+
             exit 1
           fi
 
@@ -297,9 +294,11 @@ jobs:
 
           if ! grep -Fq "Alias name: $KEY_ALIAS" /tmp/original-keystore.txt; then
             echo "ERROR: KEY_ALIAS was not found in the keystore."
+
             echo ""
             echo "Available aliases:"
             grep "Alias name:" /tmp/original-keystore.txt || true
+
             exit 1
           fi
 
@@ -484,13 +483,11 @@ jobs:
           )
 
           # ========================================================
-          # POCKETRULE RELEASE VERSION
-          # Google Play currently has version code 11706.
-          # The next version must therefore be greater than 11706.
+          # POCKETRULE VERSION
           # ========================================================
 
-          version_code = "11707"
-          version_name = "1.17.7"
+          version_code = "11708"
+          version_name = "1.17.8"
 
           if re.search(r"versionCode\s+\d+", text):
               text = re.sub(
@@ -543,8 +540,8 @@ jobs:
           path.write_text(text)
 
           print("Android release signing configured.")
-          print(f"Version name: {version_name}")
-          print(f"Version code: {version_code}")
+          print("versionName: 1.17.8")
+          print("versionCode: 11708")
           PY
 
 
@@ -569,13 +566,6 @@ jobs:
 
           grep -n \
             "signingConfig signingConfigs.release" \
-            android/app/build.gradle
-
-          echo ""
-          echo "Checking version..."
-
-          grep -n \
-            -E "versionCode|versionName" \
             android/app/build.gradle
 
 
@@ -660,7 +650,7 @@ jobs:
       - name: Upload PocketRule AAB
         uses: actions/upload-artifact@v4
         with:
-          name: PocketRule-AAB-1.17.7-${{ github.run_number }}
+          name: PocketRule-AAB-1.17.8-${{ github.run_number }}
           path: android/app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error
           retention-days: 30
@@ -682,8 +672,4 @@ jobs:
           fi
 
           if [ -f android/upload-keystore.jks ]; then
-            echo "ERROR: JKS cleanup failed."
-            exit 1
-          fi
-
-          echo "Temporary signing material removed."
+            echo "ERROR: JKS cleanup 
