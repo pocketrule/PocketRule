@@ -1,6 +1,7 @@
 import React, { Component, useState, useEffect, useRef } from "react";
 import { Capacitor } from "@capacitor/core";
 import { LocalNotifications } from "@capacitor/local-notifications";
+import { AdMob, AdmobConsentStatus, BannerAdSize, BannerAdPosition } from "@capacitor-community/admob";
 import {
   ArrowRight, ArrowLeft, Check, Eye, EyeOff, Share2, BookmarkPlus, BookmarkCheck, Minus,
   Globe2,
@@ -119,6 +120,63 @@ const CURRENCIES = [
 --------------------------------------------------------- */
 const POCKETRULE_REMINDER_ID = 481516;
 const POCKETRULE_NOTIFICATION_CHANNEL = "pocketrule-reminders-v2";
+const POCKETRULE_ADMOB_BANNER_ID = import.meta.env.VITE_ADMOB_BANNER_ID || "ca-app-pub-3940256099942544/6300978111";
+const POCKETRULE_ADMOB_ENABLED = String(import.meta.env.VITE_ADMOB_ENABLED ?? "true").toLowerCase() !== "false";
+const POCKETRULE_ADMOB_TESTING = String(import.meta.env.VITE_ADMOB_TESTING ?? "true").toLowerCase() !== "false";
+
+let pocketRuleAdMobInitialized = false;
+let pocketRuleAdMobConsentPromise = null;
+
+async function startPocketRuleAdMob() {
+  if (!isNativeApp() || !POCKETRULE_ADMOB_ENABLED) return false;
+
+  try {
+    if (!pocketRuleAdMobInitialized) {
+      await AdMob.initialize();
+      pocketRuleAdMobInitialized = true;
+    }
+
+    if (!pocketRuleAdMobConsentPromise) {
+      pocketRuleAdMobConsentPromise = (async () => {
+        let consentInfo = await AdMob.requestConsentInfo();
+
+        if (!consentInfo.canRequestAds && consentInfo.isConsentFormAvailable) {
+          consentInfo = await AdMob.showConsentForm();
+        }
+
+        return Boolean(consentInfo.canRequestAds);
+      })();
+    }
+
+    return await pocketRuleAdMobConsentPromise;
+  } catch (error) {
+    console.error("PocketRule AdMob initialization/consent failed:", error);
+    pocketRuleAdMobConsentPromise = null;
+    return false;
+  }
+}
+
+async function showPocketRuleBanner() {
+  if (!(await startPocketRuleAdMob())) return;
+  try {
+    await AdMob.showBanner({
+      adId: POCKETRULE_ADMOB_BANNER_ID,
+      adSize: BannerAdSize.ADAPTIVE_BANNER,
+      position: BannerAdPosition.BOTTOM_CENTER,
+      margin: 0,
+      isTesting: POCKETRULE_ADMOB_TESTING,
+    });
+  } catch (error) {
+    console.error("PocketRule banner failed to show:", error);
+  }
+}
+
+async function hidePocketRuleBanner() {
+  if (!isNativeApp()) return;
+  try { await AdMob.hideBanner(); } catch {}
+}
+
+
 const POCKETRULE_REMINDER_TITLE = "Money Reminder";
 const POCKETRULE_REMINDER_BODY = "You’re expecting money today. Open PocketRule and decide where it goes.";
 
@@ -1397,6 +1455,10 @@ function Onboarding({ onFinish, onCreateRule, rules, selectedRuleId, onSelectRul
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: PAPER }}>
       <div style={{ flex: 1, overflowY: "auto", padding: "26px 20px 8px" }}>
         <div style={{ textAlign: "center" }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 9, margin: "0 auto 18px", padding: "7px 12px 7px 8px", borderRadius: 999, background: PAPER_DIM, border: `1px solid ${LINE}`, boxShadow: SHADOW_CARD }}>
+            <LogoMark size={34} />
+            <span style={{ fontFamily: "Sora, sans-serif", fontWeight: 850, fontSize: 18, letterSpacing: "-0.035em", color: INK }}>PocketRule</span>
+          </div>
           <p style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, fontSize: 12, color: GOLD, margin: "2px 0 9px", letterSpacing: .8 }}>QUICK SETUP</p>
           <h1 style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 30, letterSpacing: "-0.045em", color: INK, margin: 0, lineHeight: 1.08 }}>
             Turn any money<br />into a <span style={{ color: GOLD }}>plan.</span>
@@ -3506,7 +3568,7 @@ function SettingsScreen({ settings, onChange, onPinCreated, onLockNow, onReset, 
                 "3. Reminders — If you enable plan reminders, the app may request notification permission from your device. Reminder settings are stored with your app settings.",
                 "4. Sharing — PocketRule does not automatically publish your plans. When you choose Share, the app uses your device's share sheet so you choose the destination.",
                 "5. Backups — Exported backup files may contain your rules, plans, history, and settings. Treat backup files as private financial records and store them securely.",
-                "6. Third-party services — Some optional services, such as your device's share sheet or app-store features, are controlled by their respective providers and may have their own policies.",
+                "6. Third-party services and advertising — PocketRule uses Google AdMob to display ads in eligible areas of the app. Google may process device and advertising information as described in Google's applicable privacy documentation. PocketRule uses the Google User Messaging Platform (UMP) consent flow where required. Ads are not shown during onboarding or critical money-entry flows.",
                 "7. Security — No digital storage method can be guaranteed to be perfectly secure. Use a device lock and PocketRule PIN when appropriate, and do not share backup files casually.",
                 "8. Deletion — You can reset PocketRule from Settings to remove the app's locally stored data. Separately exported backup files must be deleted from the location where you saved them.",
                 "9. Changes — We may update this policy as PocketRule evolves. The updated date will be shown here.",
@@ -4408,6 +4470,16 @@ function PocketRuleAppInner() {
     if (mq.addEventListener) mq.addEventListener("change", handler); else mq.addListener(handler);
     return () => { if (mq.removeEventListener) mq.removeEventListener("change", handler); else mq.removeListener(handler); };
   }, [data.settings.appearance]);
+
+  useEffect(() => {
+    if (!loaded || !isNativeApp()) return;
+    if (data.onboarded && screen === "resources") {
+      showPocketRuleBanner();
+    } else {
+      hidePocketRuleBanner();
+    }
+    return () => { hidePocketRuleBanner(); };
+  }, [loaded, data.onboarded, screen]);
 
   useEffect(() => {
     (async () => {
