@@ -36,7 +36,7 @@ jobs:
 
 
       # ============================================================
-      # 3. INSTALL DEPENDENCIES
+      # 3. INSTALL PROJECT DEPENDENCIES
       # ============================================================
 
       - name: Install dependencies
@@ -44,18 +44,20 @@ jobs:
 
 
       # ============================================================
-      # 4. INSTALL CAPACITOR + ADMOB PACKAGES
+      # 4. ENSURE REQUIRED CAPACITOR PACKAGES
       # ============================================================
 
-      - name: Install Capacitor and AdMob packages
+      - name: Ensure Capacitor packages
         run: |
+          set -euo pipefail
+
           npm install \
             @capacitor/core@7.6.8 \
             @capacitor/android@7.6.8 \
             @capacitor/local-notifications@7.0.7 \
             @capacitor/cli@7.6.8 \
             @capacitor-community/admob@7.2.0 \
-            lucide-react@0.468.0
+            lucide-react@1.32.0
 
 
       # ============================================================
@@ -70,7 +72,7 @@ jobs:
 
 
       # ============================================================
-      # 6. VERIFY ADMOB CONFIGURATION
+      # 6. VALIDATE ADMOB SECRETS
       # ============================================================
 
       - name: Validate AdMob secrets
@@ -82,29 +84,25 @@ jobs:
 
           if [ -z "$ADMOB_APP_ID" ]; then
             echo "ERROR: ADMOB_APP_ID GitHub Secret is missing."
-            echo ""
-            echo "Create this repository secret before building."
             exit 1
           fi
 
           if [ -z "$ADMOB_BANNER_AD_UNIT_ID" ]; then
             echo "ERROR: ADMOB_BANNER_AD_UNIT_ID GitHub Secret is missing."
-            echo ""
-            echo "Create this repository secret before building."
             exit 1
           fi
 
           if [[ "$ADMOB_APP_ID" != ca-app-pub-*~* ]]; then
-            echo "ERROR: ADMOB_APP_ID does not look like a valid AdMob App ID."
+            echo "ERROR: ADMOB_APP_ID format appears invalid."
             exit 1
           fi
 
           if [[ "$ADMOB_BANNER_AD_UNIT_ID" != ca-app-pub-*/* ]]; then
-            echo "ERROR: ADMOB_BANNER_AD_UNIT_ID does not look like a valid AdMob ad-unit ID."
+            echo "ERROR: ADMOB_BANNER_AD_UNIT_ID format appears invalid."
             exit 1
           fi
 
-          echo "AdMob configuration secrets are present."
+          echo "AdMob secrets verified."
 
 
       # ============================================================
@@ -114,13 +112,38 @@ jobs:
       - name: Build PocketRule
         env:
           VITE_ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
-          VITE_ADMOB_BANNER_AD_UNIT_ID: ${{ secrets.ADMOB_BANNER_AD_UNIT_ID }}
+          VITE_ADMOB_BANNER_ID: ${{ secrets.ADMOB_BANNER_AD_UNIT_ID }}
+          VITE_ADMOB_ENABLED: "true"
           VITE_ADMOB_TESTING: "true"
-        run: npm run build
+        run: |
+          set -euo pipefail
+
+          npm run build
 
 
       # ============================================================
-      # 8. ANDROID PLATFORM
+      # 8. VERIFY WEB BUILD
+      # ============================================================
+
+      - name: Verify web build
+        run: |
+          set -euo pipefail
+
+          if [ ! -d "dist" ]; then
+            echo "ERROR: dist directory was not created."
+            exit 1
+          fi
+
+          if [ ! -f "dist/index.html" ]; then
+            echo "ERROR: dist/index.html was not created."
+            exit 1
+          fi
+
+          echo "Web build verified."
+
+
+      # ============================================================
+      # 9. ANDROID PLATFORM
       # ============================================================
 
       - name: Add Android platform
@@ -135,7 +158,7 @@ jobs:
 
 
       # ============================================================
-      # 9. GENERATE ANDROID ASSETS
+      # 10. GENERATE ANDROID ASSETS
       # ============================================================
 
       - name: Generate Android assets
@@ -143,14 +166,14 @@ jobs:
           set -euo pipefail
 
           if [ -d "assets" ]; then
-            npx -y @capacitor/assets@3.0.5 generate --android
+            npx -y @capacitor/assets@3.0.4 generate --android
           else
             echo "No assets directory. Skipping asset generation."
           fi
 
 
       # ============================================================
-      # 10. SYNC CAPACITOR + ADMOB
+      # 11. SYNC CAPACITOR
       # ============================================================
 
       - name: Sync Capacitor
@@ -161,7 +184,7 @@ jobs:
 
 
       # ============================================================
-      # 11. CONFIGURE ADMOB ANDROID APP ID
+      # 12. CONFIGURE ADMOB ANDROID APP ID
       # ============================================================
 
       - name: Configure Android AdMob App ID
@@ -173,8 +196,7 @@ jobs:
           STRINGS_FILE="android/app/src/main/res/values/strings.xml"
           MANIFEST_FILE="android/app/src/main/AndroidManifest.xml"
 
-          mkdir -p \
-            "android/app/src/main/res/values"
+          mkdir -p android/app/src/main/res/values
 
           if [ ! -f "$STRINGS_FILE" ]; then
             cat > "$STRINGS_FILE" <<'EOF'
@@ -200,7 +222,7 @@ jobs:
           app_id = os.environ["ADMOB_APP_ID"]
 
           # --------------------------------------------------------
-          # Add/update admob_app_id resource
+          # Configure AdMob App ID resource
           # --------------------------------------------------------
 
           text = strings.read_text()
@@ -211,14 +233,18 @@ jobs:
               f'</string>'
           )
 
-          if re.search(
-              r'<string\s+name=["\']admob_app_id["\']',
-              text
-          ):
+          pattern = (
+              r'\s*<string\s+'
+              r'name=["\']admob_app_id["\']'
+              r'[^>]*>.*?</string>'
+          )
+
+          if re.search(pattern, text, flags=re.DOTALL):
               text = re.sub(
-                  r'\s*<string\s+name=["\']admob_app_id["\'][^>]*>.*?</string>',
+                  pattern,
                   "\n" + admob_line,
                   text,
+                  count=1,
                   flags=re.DOTALL
               )
           else:
@@ -231,7 +257,7 @@ jobs:
           strings.write_text(text)
 
           # --------------------------------------------------------
-          # Add/update AdMob application metadata
+          # Configure AdMob application metadata
           # --------------------------------------------------------
 
           manifest_text = manifest.read_text()
@@ -240,15 +266,15 @@ jobs:
               android:name="com.google.android.gms.ads.APPLICATION_ID"
               android:value="@string/admob_app_id" />"""
 
-          existing = re.compile(
+          metadata_pattern = re.compile(
               r'\s*<meta-data\s+'
               r'android:name=["\']com\.google\.android\.gms\.ads\.APPLICATION_ID["\']'
               r'[^>]*/?>',
               re.DOTALL
           )
 
-          if existing.search(manifest_text):
-              manifest_text = existing.sub(
+          if metadata_pattern.search(manifest_text):
+              manifest_text = metadata_pattern.sub(
                   "\n" + metadata,
                   manifest_text,
                   count=1
@@ -261,7 +287,7 @@ jobs:
 
               if not application_match:
                   raise SystemExit(
-                      "ERROR: Android <application> element was not found."
+                      "ERROR: Android application element not found."
                   )
 
               insert_at = application_match.end()
@@ -280,7 +306,7 @@ jobs:
 
 
       # ============================================================
-      # 12. ANDROID PERMISSIONS
+      # 13. ANDROID PERMISSIONS
       # ============================================================
 
       - name: Configure Android permissions
@@ -321,10 +347,12 @@ jobs:
 
 
       # ============================================================
-      # 13. VERIFY ADMOB ANDROID CONFIGURATION
+      # 14. VERIFY ADMOB CONFIGURATION
       # ============================================================
 
       - name: Verify AdMob Android configuration
+        env:
+          ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
         run: |
           set -euo pipefail
 
@@ -334,23 +362,32 @@ jobs:
           test -f "$STRINGS_FILE"
           test -f "$MANIFEST_FILE"
 
-          grep -Fq 'name="admob_app_id"' "$STRINGS_FILE" || {
-            echo "ERROR: admob_app_id is missing from strings.xml."
-            exit 1
+          grep -Fq \
+            'name="admob_app_id"' \
+            "$STRINGS_FILE" || {
+              echo "ERROR: AdMob App ID resource missing."
+              exit 1
           }
 
           grep -Fq \
             'com.google.android.gms.ads.APPLICATION_ID' \
             "$MANIFEST_FILE" || {
-            echo "ERROR: AdMob APPLICATION_ID metadata is missing."
-            exit 1
+              echo "ERROR: AdMob APPLICATION_ID metadata missing."
+              exit 1
+          }
+
+          grep -Fq \
+            "$ADMOB_APP_ID" \
+            "$STRINGS_FILE" || {
+              echo "ERROR: Configured AdMob App ID does not match the GitHub Secret."
+              exit 1
           }
 
           echo "AdMob Android configuration verified."
 
 
       # ============================================================
-      # 14. JAVA
+      # 15. JAVA
       # ============================================================
 
       - name: Setup Java
@@ -361,7 +398,7 @@ jobs:
 
 
       # ============================================================
-      # 15. VALIDATE SIGNING SECRETS
+      # 16. VALIDATE SIGNING SECRETS
       # ============================================================
 
       - name: Validate signing secrets
@@ -397,7 +434,7 @@ jobs:
 
 
       # ============================================================
-      # 16. DECODE KEYSTORE
+      # 17. DECODE KEYSTORE
       # ============================================================
 
       - name: Decode upload keystore
@@ -421,7 +458,7 @@ jobs:
 
 
       # ============================================================
-      # 17. DETECT KEYSTORE TYPE
+      # 18. DETECT KEYSTORE TYPE
       # ============================================================
 
       - name: Detect keystore type
@@ -468,7 +505,7 @@ jobs:
 
 
       # ============================================================
-      # 18. VERIFY KEYSTORE
+      # 19. VERIFY KEYSTORE
       # ============================================================
 
       - name: Verify keystore
@@ -499,7 +536,7 @@ jobs:
 
 
       # ============================================================
-      # 19. VERIFY PRIVATE KEY
+      # 20. VERIFY PRIVATE KEY
       # ============================================================
 
       - name: Verify private key
@@ -524,7 +561,7 @@ jobs:
 
 
       # ============================================================
-      # 20. CONFIGURE VERSION + SIGNING
+      # 21. CONFIGURE VERSION + SIGNING
       # ============================================================
 
       - name: Configure Android release
@@ -591,11 +628,6 @@ jobs:
           # SIGNING CONFIG
           # --------------------------------------------------------
 
-          signing_match = re.search(
-              r"\bsigningConfigs\s*\{",
-              text
-          )
-
           signing_block = """signingConfigs {
               release {
                   storeFile file("../upload-keystore-original")
@@ -605,6 +637,11 @@ jobs:
                   keyPassword System.getenv("EFFECTIVE_KEY_PASSWORD")
               }
           }"""
+
+          signing_match = re.search(
+              r"\bsigningConfigs\s*\{",
+              text
+          )
 
           if signing_match:
 
@@ -619,6 +656,7 @@ jobs:
                       depth += 1
                   elif text[i] == "}":
                       depth -= 1
+
                       if depth == 0:
                           end = i + 1
                           break
@@ -648,9 +686,12 @@ jobs:
 
               position = android_match.end()
 
-              block = "\n\n    " + signing_block.replace(
-                  "\n",
-                  "\n    "
+              block = (
+                  "\n\n    "
+                  + signing_block.replace(
+                      "\n",
+                      "\n    "
+                  )
               )
 
               text = (
@@ -663,18 +704,17 @@ jobs:
           # RELEASE SIGNING
           # --------------------------------------------------------
 
-          if "signingConfig signingConfigs.release" not in text:
+          release_match = re.search(
+              r"(buildTypes\s*\{\s*release\s*\{)",
+              text
+          )
 
-              release_match = re.search(
-                  r"(buildTypes\s*\{\s*release\s*\})",
-                  text
+          if not release_match:
+              raise SystemExit(
+                  "ERROR: release build type not found."
               )
 
-              if not release_match:
-                  raise SystemExit(
-                      "ERROR: release build type not found."
-                  )
-
+          if "signingConfig signingConfigs.release" not in text:
               text = re.sub(
                   r"(buildTypes\s*\{\s*release\s*\{)",
                   r"\1\n            signingConfig signingConfigs.release",
@@ -684,14 +724,18 @@ jobs:
 
           path.write_text(text)
 
+          print("================================")
+          print("POCKETRULE RELEASE CONFIGURED")
+          print("================================")
           print("Version name: 1.18.0")
           print("Version code: 11712")
-          print("Release signing configured.")
+          print("Release signing: configured")
+          print("================================")
           PY
 
 
       # ============================================================
-      # 21. VERIFY VERSION + SIGNING
+      # 22. VERIFY VERSION + SIGNING
       # ============================================================
 
       - name: Verify Android configuration
@@ -748,15 +792,15 @@ jobs:
           print("================================")
           print("ANDROID CONFIGURATION VERIFIED")
           print("================================")
-          print("versionName: 1.18.0")
-          print("versionCode: 11712")
-          print("release signing: OK")
+          print("Version name: 1.18.0")
+          print("Version code: 11712")
+          print("Release signing: OK")
           print("================================")
           PY
 
 
       # ============================================================
-      # 22. BUILD SIGNED AAB
+      # 23. BUILD SIGNED AAB
       # ============================================================
 
       - name: Build signed release AAB
@@ -779,7 +823,7 @@ jobs:
 
 
       # ============================================================
-      # 23. PREPARE AAB
+      # 24. PREPARE AAB
       # ============================================================
 
       - name: Prepare AAB artifact
@@ -811,7 +855,7 @@ jobs:
 
 
       # ============================================================
-      # 24. VERIFY AAB
+      # 25. VERIFY AAB
       # ============================================================
 
       - name: Verify AAB
@@ -836,7 +880,7 @@ jobs:
 
 
       # ============================================================
-      # 25. VERIFY AAB SIGNATURE
+      # 26. VERIFY AAB SIGNATURE
       # ============================================================
 
       - name: Verify AAB signature
@@ -853,7 +897,7 @@ jobs:
 
 
       # ============================================================
-      # 26. UPLOAD AAB
+      # 27. UPLOAD AAB ARTIFACT
       # ============================================================
 
       - name: Upload PocketRule AAB
@@ -864,11 +908,10 @@ jobs:
           path: release/PocketRule-v1.18.0-code11712.aab
           if-no-files-found: error
           retention-days: 30
-          archive: false
 
 
       # ============================================================
-      # 27. CONFIRM ARTIFACT
+      # 28. CONFIRM ARTIFACT
       # ============================================================
 
       - name: Confirm artifact
@@ -892,4 +935,5 @@ jobs:
           echo "Version: 1.18.0"
           echo "Version code: 11712"
           echo "AdMob: CONFIGURED"
+          echo "AdMob testing: ENABLED"
           echo "================================"
