@@ -44,16 +44,17 @@ jobs:
 
 
       # ============================================================
-      # 4. INSTALL CAPACITOR PACKAGES
+      # 4. INSTALL CAPACITOR + ADMOB PACKAGES
       # ============================================================
 
-      - name: Install Capacitor packages
+      - name: Install Capacitor and AdMob packages
         run: |
           npm install \
             @capacitor/core@7.6.8 \
             @capacitor/android@7.6.8 \
             @capacitor/local-notifications@7.0.7 \
             @capacitor/cli@7.6.8 \
+            @capacitor-community/admob@7.2.0 \
             lucide-react@0.468.0
 
 
@@ -69,19 +70,63 @@ jobs:
 
 
       # ============================================================
-      # 6. BUILD WEB APP
+      # 6. VERIFY ADMOB CONFIGURATION
+      # ============================================================
+
+      - name: Validate AdMob secrets
+        env:
+          ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
+          ADMOB_BANNER_AD_UNIT_ID: ${{ secrets.ADMOB_BANNER_AD_UNIT_ID }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$ADMOB_APP_ID" ]; then
+            echo "ERROR: ADMOB_APP_ID GitHub Secret is missing."
+            echo ""
+            echo "Create this repository secret before building."
+            exit 1
+          fi
+
+          if [ -z "$ADMOB_BANNER_AD_UNIT_ID" ]; then
+            echo "ERROR: ADMOB_BANNER_AD_UNIT_ID GitHub Secret is missing."
+            echo ""
+            echo "Create this repository secret before building."
+            exit 1
+          fi
+
+          if [[ "$ADMOB_APP_ID" != ca-app-pub-*~* ]]; then
+            echo "ERROR: ADMOB_APP_ID does not look like a valid AdMob App ID."
+            exit 1
+          fi
+
+          if [[ "$ADMOB_BANNER_AD_UNIT_ID" != ca-app-pub-*/* ]]; then
+            echo "ERROR: ADMOB_BANNER_AD_UNIT_ID does not look like a valid AdMob ad-unit ID."
+            exit 1
+          fi
+
+          echo "AdMob configuration secrets are present."
+
+
+      # ============================================================
+      # 7. BUILD WEB APP
       # ============================================================
 
       - name: Build PocketRule
+        env:
+          VITE_ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
+          VITE_ADMOB_BANNER_AD_UNIT_ID: ${{ secrets.ADMOB_BANNER_AD_UNIT_ID }}
+          VITE_ADMOB_TESTING: "true"
         run: npm run build
 
 
       # ============================================================
-      # 7. ANDROID PLATFORM
+      # 8. ANDROID PLATFORM
       # ============================================================
 
       - name: Add Android platform
         run: |
+          set -euo pipefail
+
           if [ ! -d "android" ]; then
             npx cap add android
           else
@@ -90,11 +135,13 @@ jobs:
 
 
       # ============================================================
-      # 8. GENERATE ANDROID ASSETS
+      # 9. GENERATE ANDROID ASSETS
       # ============================================================
 
       - name: Generate Android assets
         run: |
+          set -euo pipefail
+
           if [ -d "assets" ]; then
             npx -y @capacitor/assets@3.0.5 generate --android
           else
@@ -103,15 +150,137 @@ jobs:
 
 
       # ============================================================
-      # 9. SYNC CAPACITOR
+      # 10. SYNC CAPACITOR + ADMOB
       # ============================================================
 
       - name: Sync Capacitor
-        run: npx cap sync android
+        run: |
+          set -euo pipefail
+
+          npx cap sync android
 
 
       # ============================================================
-      # 10. ANDROID PERMISSIONS
+      # 11. CONFIGURE ADMOB ANDROID APP ID
+      # ============================================================
+
+      - name: Configure Android AdMob App ID
+        env:
+          ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
+        run: |
+          set -euo pipefail
+
+          STRINGS_FILE="android/app/src/main/res/values/strings.xml"
+          MANIFEST_FILE="android/app/src/main/AndroidManifest.xml"
+
+          mkdir -p \
+            "android/app/src/main/res/values"
+
+          if [ ! -f "$STRINGS_FILE" ]; then
+            cat > "$STRINGS_FILE" <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+          </resources>
+          EOF
+          fi
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import re
+
+          strings = Path(
+              "android/app/src/main/res/values/strings.xml"
+          )
+
+          manifest = Path(
+              "android/app/src/main/AndroidManifest.xml"
+          )
+
+          app_id = os.environ["ADMOB_APP_ID"]
+
+          # --------------------------------------------------------
+          # Add/update admob_app_id resource
+          # --------------------------------------------------------
+
+          text = strings.read_text()
+
+          admob_line = (
+              f'    <string name="admob_app_id">'
+              f'{app_id}'
+              f'</string>'
+          )
+
+          if re.search(
+              r'<string\s+name=["\']admob_app_id["\']',
+              text
+          ):
+              text = re.sub(
+                  r'\s*<string\s+name=["\']admob_app_id["\'][^>]*>.*?</string>',
+                  "\n" + admob_line,
+                  text,
+                  flags=re.DOTALL
+              )
+          else:
+              text = text.replace(
+                  "</resources>",
+                  "\n" + admob_line + "\n</resources>",
+                  1
+              )
+
+          strings.write_text(text)
+
+          # --------------------------------------------------------
+          # Add/update AdMob application metadata
+          # --------------------------------------------------------
+
+          manifest_text = manifest.read_text()
+
+          metadata = """        <meta-data
+              android:name="com.google.android.gms.ads.APPLICATION_ID"
+              android:value="@string/admob_app_id" />"""
+
+          existing = re.compile(
+              r'\s*<meta-data\s+'
+              r'android:name=["\']com\.google\.android\.gms\.ads\.APPLICATION_ID["\']'
+              r'[^>]*/?>',
+              re.DOTALL
+          )
+
+          if existing.search(manifest_text):
+              manifest_text = existing.sub(
+                  "\n" + metadata,
+                  manifest_text,
+                  count=1
+              )
+          else:
+              application_match = re.search(
+                  r'(<application\b[^>]*>)',
+                  manifest_text
+              )
+
+              if not application_match:
+                  raise SystemExit(
+                      "ERROR: Android <application> element was not found."
+                  )
+
+              insert_at = application_match.end()
+
+              manifest_text = (
+                  manifest_text[:insert_at]
+                  + "\n"
+                  + metadata
+                  + manifest_text[insert_at:]
+              )
+
+          manifest.write_text(manifest_text)
+
+          print("AdMob Android App ID configured.")
+          PY
+
+
+      # ============================================================
+      # 12. ANDROID PERMISSIONS
       # ============================================================
 
       - name: Configure Android permissions
@@ -152,7 +321,36 @@ jobs:
 
 
       # ============================================================
-      # 11. JAVA
+      # 13. VERIFY ADMOB ANDROID CONFIGURATION
+      # ============================================================
+
+      - name: Verify AdMob Android configuration
+        run: |
+          set -euo pipefail
+
+          STRINGS_FILE="android/app/src/main/res/values/strings.xml"
+          MANIFEST_FILE="android/app/src/main/AndroidManifest.xml"
+
+          test -f "$STRINGS_FILE"
+          test -f "$MANIFEST_FILE"
+
+          grep -Fq 'name="admob_app_id"' "$STRINGS_FILE" || {
+            echo "ERROR: admob_app_id is missing from strings.xml."
+            exit 1
+          }
+
+          grep -Fq \
+            'com.google.android.gms.ads.APPLICATION_ID' \
+            "$MANIFEST_FILE" || {
+            echo "ERROR: AdMob APPLICATION_ID metadata is missing."
+            exit 1
+          }
+
+          echo "AdMob Android configuration verified."
+
+
+      # ============================================================
+      # 14. JAVA
       # ============================================================
 
       - name: Setup Java
@@ -163,7 +361,7 @@ jobs:
 
 
       # ============================================================
-      # 12. VALIDATE SIGNING SECRETS
+      # 15. VALIDATE SIGNING SECRETS
       # ============================================================
 
       - name: Validate signing secrets
@@ -199,7 +397,7 @@ jobs:
 
 
       # ============================================================
-      # 13. DECODE KEYSTORE
+      # 16. DECODE KEYSTORE
       # ============================================================
 
       - name: Decode upload keystore
@@ -223,7 +421,7 @@ jobs:
 
 
       # ============================================================
-      # 14. DETECT KEYSTORE TYPE
+      # 17. DETECT KEYSTORE TYPE
       # ============================================================
 
       - name: Detect keystore type
@@ -270,7 +468,7 @@ jobs:
 
 
       # ============================================================
-      # 15. VERIFY KEYSTORE
+      # 18. VERIFY KEYSTORE
       # ============================================================
 
       - name: Verify keystore
@@ -301,7 +499,7 @@ jobs:
 
 
       # ============================================================
-      # 16. VERIFY PRIVATE KEY
+      # 19. VERIFY PRIVATE KEY
       # ============================================================
 
       - name: Verify private key
@@ -326,7 +524,7 @@ jobs:
 
 
       # ============================================================
-      # 17. CONFIGURE VERSION + SIGNING
+      # 20. CONFIGURE VERSION + SIGNING
       # ============================================================
 
       - name: Configure Android release
@@ -337,7 +535,7 @@ jobs:
           from pathlib import Path
           import re
 
-          VERSION_CODE = 11711
+          VERSION_CODE = 11712
           VERSION_NAME = "1.18.0"
 
           path = Path("android/app/build.gradle")
@@ -468,7 +666,7 @@ jobs:
           if "signingConfig signingConfigs.release" not in text:
 
               release_match = re.search(
-                  r"(buildTypes\s*\{\s*release\s*\{)",
+                  r"(buildTypes\s*\{\s*release\s*\})",
                   text
               )
 
@@ -487,13 +685,13 @@ jobs:
           path.write_text(text)
 
           print("Version name: 1.18.0")
-          print("Version code: 11711")
+          print("Version code: 11712")
           print("Release signing configured.")
           PY
 
 
       # ============================================================
-      # 18. VERIFY VERSION + SIGNING
+      # 21. VERIFY VERSION + SIGNING
       # ============================================================
 
       - name: Verify Android configuration
@@ -519,9 +717,9 @@ jobs:
                   f"Found {len(codes)}."
               )
 
-          if codes[0] != "11711":
+          if codes[0] != "11712":
               raise SystemExit(
-                  f"ERROR: Expected versionCode 11711. "
+                  f"ERROR: Expected versionCode 11712. "
                   f"Found {codes[0]}."
               )
 
@@ -551,14 +749,14 @@ jobs:
           print("ANDROID CONFIGURATION VERIFIED")
           print("================================")
           print("versionName: 1.18.0")
-          print("versionCode: 11711")
+          print("versionCode: 11712")
           print("release signing: OK")
           print("================================")
           PY
 
 
       # ============================================================
-      # 19. BUILD SIGNED AAB
+      # 22. BUILD SIGNED AAB
       # ============================================================
 
       - name: Build signed release AAB
@@ -581,7 +779,7 @@ jobs:
 
 
       # ============================================================
-      # 20. PREPARE AAB
+      # 23. PREPARE AAB
       # ============================================================
 
       - name: Prepare AAB artifact
@@ -589,7 +787,7 @@ jobs:
           set -euo pipefail
 
           SOURCE_AAB="android/app/build/outputs/bundle/release/app-release.aab"
-          RELEASE_AAB="release/PocketRule-v1.18.0-code11711.aab"
+          RELEASE_AAB="release/PocketRule-v1.18.0-code11712.aab"
 
           if [ ! -f "$SOURCE_AAB" ]; then
             echo "ERROR: AAB was not generated."
@@ -613,14 +811,14 @@ jobs:
 
 
       # ============================================================
-      # 21. VERIFY AAB
+      # 24. VERIFY AAB
       # ============================================================
 
       - name: Verify AAB
         run: |
           set -euo pipefail
 
-          FILE="release/PocketRule-v1.18.0-code11711.aab"
+          FILE="release/PocketRule-v1.18.0-code11712.aab"
 
           test -f "$FILE"
           test -s "$FILE"
@@ -638,7 +836,7 @@ jobs:
 
 
       # ============================================================
-      # 22. VERIFY AAB SIGNATURE
+      # 25. VERIFY AAB SIGNATURE
       # ============================================================
 
       - name: Verify AAB signature
@@ -649,28 +847,28 @@ jobs:
             -verify \
             -verbose \
             -certs \
-            release/PocketRule-v1.18.0-code11711.aab
+            release/PocketRule-v1.18.0-code11712.aab
 
           echo "AAB signature verification passed."
 
 
       # ============================================================
-      # 23. UPLOAD AAB
+      # 26. UPLOAD AAB
       # ============================================================
 
       - name: Upload PocketRule AAB
         id: upload_aab
         uses: actions/upload-artifact@v7
         with:
-          name: PocketRule-AAB-v1.18.0-code11711
-          path: release/PocketRule-v1.18.0-code11711.aab
+          name: PocketRule-AAB-v1.18.0-code11712
+          path: release/PocketRule-v1.18.0-code11712.aab
           if-no-files-found: error
           retention-days: 30
           archive: false
 
 
       # ============================================================
-      # 24. CONFIRM ARTIFACT
+      # 27. CONFIRM ARTIFACT
       # ============================================================
 
       - name: Confirm artifact
@@ -690,7 +888,8 @@ jobs:
           echo "================================"
           echo "Artifact ID: $ARTIFACT_ID"
           echo "Artifact URL: $ARTIFACT_URL"
-          echo "File: PocketRule-v1.18.0-code11711.aab"
+          echo "File: PocketRule-v1.18.0-code11712.aab"
           echo "Version: 1.18.0"
-          echo "Version code: 11711"
+          echo "Version code: 11712"
+          echo "AdMob: CONFIGURED"
           echo "================================"
