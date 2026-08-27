@@ -129,15 +129,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ ! -d "dist" ]; then
+          test -d "dist" || {
             echo "ERROR: dist directory was not created."
             exit 1
-          fi
+          }
 
-          if [ ! -f "dist/index.html" ]; then
+          test -f "dist/index.html" || {
             echo "ERROR: dist/index.html was not created."
             exit 1
-          fi
+          }
 
           echo "Web build verified."
 
@@ -184,7 +184,24 @@ jobs:
 
 
       # ============================================================
-      # 12. CONFIGURE ADMOB ANDROID APP ID
+      # 12. INSTALL ANDROID 16 SDK
+      # ============================================================
+
+      - name: Install Android 16 SDK
+        run: |
+          set -euo pipefail
+
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+
+          sdkmanager \
+            "platforms;android-36" \
+            "build-tools;36.0.0"
+
+          echo "Android 16 SDK installed."
+
+
+      # ============================================================
+      # 13. CONFIGURE ADMOB ANDROID APP ID
       # ============================================================
 
       - name: Configure Android AdMob App ID
@@ -221,10 +238,6 @@ jobs:
 
           app_id = os.environ["ADMOB_APP_ID"]
 
-          # --------------------------------------------------------
-          # Configure AdMob App ID resource
-          # --------------------------------------------------------
-
           text = strings.read_text()
 
           admob_line = (
@@ -255,10 +268,6 @@ jobs:
               )
 
           strings.write_text(text)
-
-          # --------------------------------------------------------
-          # Configure AdMob application metadata
-          # --------------------------------------------------------
 
           manifest_text = manifest.read_text()
 
@@ -306,15 +315,16 @@ jobs:
 
 
       # ============================================================
-      # 13. ANDROID PERMISSIONS
+      # 14. ANDROID 16 + REQUIRED PERMISSIONS
       # ============================================================
 
-      - name: Configure Android permissions
+      - name: Configure Android 16 and permissions
         run: |
           set -euo pipefail
 
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           manifest = Path(
               "android/app/src/main/AndroidManifest.xml"
@@ -334,7 +344,22 @@ jobs:
           ]
 
           for permission in permissions:
-              if permission not in text:
+              match = re.search(
+                  r'android:name="([^"]+)"',
+                  permission
+              )
+
+              if not match:
+                  raise SystemExit(
+                      "ERROR: Could not determine permission name."
+                  )
+
+              permission_name = match.group(1)
+
+              if (
+                  f'android:name="{permission_name}"'
+                  not in text
+              ):
                   text = text.replace(
                       "</manifest>",
                       f"    {permission}\n</manifest>",
@@ -343,16 +368,137 @@ jobs:
 
           manifest.write_text(text)
 
-          print("Android permissions configured.")
-          print("AD_ID permission explicitly configured.")
+          print("================================")
+          print("ANDROID PERMISSIONS CONFIGURED")
+          print("================================")
+          print("AD_ID: OK")
+          print("POST_NOTIFICATIONS: OK")
+          print("SCHEDULE_EXACT_ALARM: OK")
+          print("================================")
           PY
 
 
       # ============================================================
-      # 14. VERIFY ADMOB + AD_ID CONFIGURATION
+      # 15. FORCE COMPILE SDK 36 + TARGET SDK 36
       # ============================================================
 
-      - name: Verify AdMob Android configuration
+      - name: Configure Android API 36
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("android/app/build.gradle")
+
+          if not path.exists():
+              raise SystemExit(
+                  "ERROR: android/app/build.gradle not found."
+              )
+
+          text = path.read_text()
+
+          # --------------------------------------------------------
+          # COMPILE SDK
+          # --------------------------------------------------------
+
+          compile_patterns = [
+              r'\bcompileSdkVersion\s+\d+',
+              r'\bcompileSdk\s*=\s*\d+',
+              r'\bcompileSdk\s+\d+'
+          ]
+
+          replaced_compile = False
+
+          for pattern in compile_patterns:
+              if re.search(pattern, text):
+                  text = re.sub(
+                      pattern,
+                      'compileSdk 36',
+                      text,
+                      count=1
+                  )
+                  replaced_compile = True
+                  break
+
+          if not replaced_compile:
+              android_match = re.search(
+                  r'\bandroid\s*\{',
+                  text
+              )
+
+              if not android_match:
+                  raise SystemExit(
+                      "ERROR: android block not found."
+                  )
+
+              position = android_match.end()
+
+              text = (
+                  text[:position]
+                  + "\n    compileSdk 36"
+                  + text[position:]
+              )
+
+          # --------------------------------------------------------
+          # TARGET SDK
+          # --------------------------------------------------------
+
+          target_patterns = [
+              r'\btargetSdkVersion\s+\d+',
+              r'\btargetSdk\s*=\s*\d+',
+              r'\btargetSdk\s+\d+'
+          ]
+
+          replaced_target = False
+
+          for pattern in target_patterns:
+              if re.search(pattern, text):
+                  text = re.sub(
+                      pattern,
+                      'targetSdk 36',
+                      text,
+                      count=1
+                  )
+                  replaced_target = True
+                  break
+
+          if not replaced_target:
+              default_config_match = re.search(
+                  r'\bdefaultConfig\s*\{',
+                  text
+              )
+
+              if not default_config_match:
+                  raise SystemExit(
+                      "ERROR: defaultConfig block not found."
+                  )
+
+              position = default_config_match.end()
+
+              text = (
+                  text[:position]
+                  + "\n        targetSdk 36"
+                  + text[position:]
+              )
+
+          path.write_text(text)
+
+          print("================================")
+          print("ANDROID 16 CONFIGURED")
+          print("================================")
+          print("compileSdk: 36")
+          print("targetSdk: 36")
+          print("================================")
+          PY
+
+
+      # ============================================================
+      # 16. VERIFY ADMOB + ANDROID 16
+      # ============================================================
+
+      - name: Verify Android and AdMob configuration
         env:
           ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
         run: |
@@ -360,12 +506,14 @@ jobs:
 
           STRINGS_FILE="android/app/src/main/res/values/strings.xml"
           MANIFEST_FILE="android/app/src/main/AndroidManifest.xml"
+          GRADLE_FILE="android/app/build.gradle"
 
           test -f "$STRINGS_FILE"
           test -f "$MANIFEST_FILE"
+          test -f "$GRADLE_FILE"
 
           # --------------------------------------------------------
-          # Verify AdMob App ID
+          # ADMOB APP ID
           # --------------------------------------------------------
 
           grep -Fq \
@@ -385,32 +533,78 @@ jobs:
           grep -Fq \
             "$ADMOB_APP_ID" \
             "$STRINGS_FILE" || {
-              echo "ERROR: Configured AdMob App ID does not match the GitHub Secret."
+              echo "ERROR: AdMob App ID does not match secret."
               exit 1
           }
 
           # --------------------------------------------------------
-          # Verify Advertising ID permission
+          # AD_ID
           # --------------------------------------------------------
 
           grep -Fq \
             'com.google.android.gms.permission.AD_ID' \
             "$MANIFEST_FILE" || {
-              echo "ERROR: AD_ID permission is missing from AndroidManifest.xml."
+              echo "ERROR: AD_ID permission is missing."
               exit 1
           }
 
-          echo "================================"
-          echo "ADMOB CONFIGURATION VERIFIED"
-          echo "================================"
-          echo "AdMob App ID: OK"
-          echo "AdMob metadata: OK"
-          echo "AD_ID permission: OK"
-          echo "================================"
+          # --------------------------------------------------------
+          # API 36
+          # --------------------------------------------------------
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          text = Path(
+              "android/app/build.gradle"
+          ).read_text()
+
+          compile_matches = re.findall(
+              r'\bcompileSdk\s+(\d+)',
+              text
+          )
+
+          target_matches = re.findall(
+              r'\btargetSdk\s+(\d+)',
+              text
+          )
+
+          if not compile_matches:
+              raise SystemExit(
+                  "ERROR: compileSdk not found."
+              )
+
+          if compile_matches[0] != "36":
+              raise SystemExit(
+                  f"ERROR: compileSdk is "
+                  f"{compile_matches[0]}, expected 36."
+              )
+
+          if not target_matches:
+              raise SystemExit(
+                  "ERROR: targetSdk not found."
+              )
+
+          if target_matches[0] != "36":
+              raise SystemExit(
+                  f"ERROR: targetSdk is "
+                  f"{target_matches[0]}, expected 36."
+              )
+
+          print("================================")
+          print("ANDROID + ADMOB VERIFIED")
+          print("================================")
+          print("compileSdk: 36")
+          print("targetSdk: 36")
+          print("AD_ID: OK")
+          print("AdMob App ID: OK")
+          print("================================")
+          PY
 
 
       # ============================================================
-      # 15. JAVA
+      # 17. JAVA
       # ============================================================
 
       - name: Setup Java
@@ -421,7 +615,7 @@ jobs:
 
 
       # ============================================================
-      # 16. VALIDATE SIGNING SECRETS
+      # 18. VALIDATE SIGNING SECRETS
       # ============================================================
 
       - name: Validate signing secrets
@@ -457,7 +651,7 @@ jobs:
 
 
       # ============================================================
-      # 17. DECODE KEYSTORE
+      # 19. DECODE KEYSTORE
       # ============================================================
 
       - name: Decode upload keystore
@@ -470,10 +664,10 @@ jobs:
             | base64 --decode \
             > android/upload-keystore-original
 
-          if [ ! -s android/upload-keystore-original ]; then
+          test -s android/upload-keystore-original || {
             echo "ERROR: Keystore decoding failed."
             exit 1
-          fi
+          }
 
           chmod 600 android/upload-keystore-original
 
@@ -481,7 +675,7 @@ jobs:
 
 
       # ============================================================
-      # 18. DETECT KEYSTORE TYPE
+      # 20. DETECT KEYSTORE TYPE
       # ============================================================
 
       - name: Detect keystore type
@@ -528,7 +722,7 @@ jobs:
 
 
       # ============================================================
-      # 19. VERIFY KEYSTORE
+      # 21. VERIFY KEYSTORE
       # ============================================================
 
       - name: Verify keystore
@@ -559,7 +753,7 @@ jobs:
 
 
       # ============================================================
-      # 20. VERIFY PRIVATE KEY
+      # 22. VERIFY PRIVATE KEY
       # ============================================================
 
       - name: Verify private key
@@ -584,7 +778,7 @@ jobs:
 
 
       # ============================================================
-      # 21. CONFIGURE VERSION + SIGNING
+      # 23. CONFIGURE VERSION + SIGNING
       # ============================================================
 
       - name: Configure Android release
@@ -595,8 +789,8 @@ jobs:
           from pathlib import Path
           import re
 
-          VERSION_CODE = 11800
-          VERSION_NAME = "1.18.0"
+          VERSION_CODE = 11801
+          VERSION_NAME = "1.18.1"
 
           path = Path("android/app/build.gradle")
 
@@ -750,15 +944,17 @@ jobs:
           print("================================")
           print("POCKETRULE RELEASE CONFIGURED")
           print("================================")
-          print("Version name: 1.18.0")
-          print("Version code: 11800")
+          print("Version name: 1.18.1")
+          print("Version code: 11801")
+          print("compileSdk: 36")
+          print("targetSdk: 36")
           print("Release signing: configured")
           print("================================")
           PY
 
 
       # ============================================================
-      # 22. VERIFY VERSION + SIGNING
+      # 24. VERIFY VERSION + SIGNING
       # ============================================================
 
       - name: Verify Android configuration
@@ -784,9 +980,9 @@ jobs:
                   f"Found {len(codes)}."
               )
 
-          if codes[0] != "11800":
+          if codes[0] != "11801":
               raise SystemExit(
-                  f"ERROR: Expected versionCode 11800. "
+                  f"ERROR: Expected versionCode 11801. "
                   f"Found {codes[0]}."
               )
 
@@ -801,10 +997,30 @@ jobs:
                   f"Found {len(names)}."
               )
 
-          if names[0] != "1.18.0":
+          if names[0] != "1.18.1":
               raise SystemExit(
-                  f"ERROR: Expected versionName 1.18.0. "
+                  f"ERROR: Expected versionName 1.18.1. "
                   f"Found {names[0]}."
+              )
+
+          compile_matches = re.findall(
+              r'\bcompileSdk\s+(\d+)',
+              text
+          )
+
+          target_matches = re.findall(
+              r'\btargetSdk\s+(\d+)',
+              text
+          )
+
+          if not compile_matches or compile_matches[0] != "36":
+              raise SystemExit(
+                  "ERROR: compileSdk is not 36."
+              )
+
+          if not target_matches or target_matches[0] != "36":
+              raise SystemExit(
+                  "ERROR: targetSdk is not 36."
               )
 
           if "signingConfig signingConfigs.release" not in text:
@@ -815,15 +1031,17 @@ jobs:
           print("================================")
           print("ANDROID CONFIGURATION VERIFIED")
           print("================================")
-          print("Version name: 1.18.0")
-          print("Version code: 11800")
+          print("Version name: 1.18.1")
+          print("Version code: 11801")
+          print("compileSdk: 36")
+          print("targetSdk: 36")
           print("Release signing: OK")
           print("================================")
           PY
 
 
       # ============================================================
-      # 23. BUILD SIGNED AAB
+      # 25. BUILD SIGNED AAB
       # ============================================================
 
       - name: Build signed release AAB
@@ -846,7 +1064,7 @@ jobs:
 
 
       # ============================================================
-      # 24. PREPARE AAB
+      # 26. PREPARE AAB
       # ============================================================
 
       - name: Prepare AAB artifact
@@ -854,12 +1072,11 @@ jobs:
           set -euo pipefail
 
           SOURCE_AAB="android/app/build/outputs/bundle/release/app-release.aab"
-          RELEASE_AAB="release/PocketRule-v1.18.0-code11800.aab"
+          RELEASE_AAB="release/PocketRule-v1.18.1-code11801.aab"
 
           if [ ! -f "$SOURCE_AAB" ]; then
             echo "ERROR: AAB was not generated."
             echo ""
-            echo "Available AAB files:"
             find android -type f -name "*.aab" -print || true
             exit 1
           fi
@@ -868,24 +1085,24 @@ jobs:
 
           cp "$SOURCE_AAB" "$RELEASE_AAB"
 
-          if [ ! -s "$RELEASE_AAB" ]; then
+          test -s "$RELEASE_AAB" || {
             echo "ERROR: Prepared AAB is empty."
             exit 1
-          fi
+          }
 
           echo "AAB prepared successfully:"
           ls -lh "$RELEASE_AAB"
 
 
       # ============================================================
-      # 25. VERIFY AAB
+      # 27. VERIFY AAB
       # ============================================================
 
       - name: Verify AAB
         run: |
           set -euo pipefail
 
-          FILE="release/PocketRule-v1.18.0-code11800.aab"
+          FILE="release/PocketRule-v1.18.1-code11801.aab"
 
           test -f "$FILE"
           test -s "$FILE"
@@ -903,7 +1120,7 @@ jobs:
 
 
       # ============================================================
-      # 26. VERIFY AAB SIGNATURE
+      # 28. VERIFY AAB SIGNATURE
       # ============================================================
 
       - name: Verify AAB signature
@@ -914,27 +1131,27 @@ jobs:
             -verify \
             -verbose \
             -certs \
-            release/PocketRule-v1.18.0-code11800.aab
+            release/PocketRule-v1.18.1-code11801.aab
 
           echo "AAB signature verification passed."
 
 
       # ============================================================
-      # 27. UPLOAD AAB ARTIFACT
+      # 29. UPLOAD AAB ARTIFACT
       # ============================================================
 
       - name: Upload PocketRule AAB
         id: upload_aab
         uses: actions/upload-artifact@v7
         with:
-          name: PocketRule-AAB-v1.18.0-code11800
-          path: release/PocketRule-v1.18.0-code11800.aab
+          name: PocketRule-AAB-v1.18.1-code11801
+          path: release/PocketRule-v1.18.1-code11801.aab
           if-no-files-found: error
           retention-days: 30
 
 
       # ============================================================
-      # 28. CONFIRM ARTIFACT
+      # 30. CONFIRM ARTIFACT
       # ============================================================
 
       - name: Confirm artifact
@@ -954,9 +1171,11 @@ jobs:
           echo "================================"
           echo "Artifact ID: $ARTIFACT_ID"
           echo "Artifact URL: $ARTIFACT_URL"
-          echo "File: PocketRule-v1.18.0-code11800.aab"
-          echo "Version: 1.18.0"
-          echo "Version code: 11800"
+          echo "File: PocketRule-v1.18.1-code11801.aab"
+          echo "Version: 1.18.1"
+          echo "Version code: 11801"
+          echo "compileSdk: 36"
+          echo "targetSdk: 36"
           echo "AD_ID permission: CONFIGURED"
           echo "AdMob: CONFIGURED"
           echo "AdMob testing: ENABLED"
