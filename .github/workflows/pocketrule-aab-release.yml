@@ -328,6 +328,7 @@ jobs:
           text = manifest.read_text()
 
           permissions = [
+              '<uses-permission android:name="com.google.android.gms.permission.AD_ID" />',
               '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
               '<uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />'
           ]
@@ -343,11 +344,12 @@ jobs:
           manifest.write_text(text)
 
           print("Android permissions configured.")
+          print("AD_ID permission explicitly configured.")
           PY
 
 
       # ============================================================
-      # 14. VERIFY ADMOB CONFIGURATION
+      # 14. VERIFY ADMOB + AD_ID CONFIGURATION
       # ============================================================
 
       - name: Verify AdMob Android configuration
@@ -361,6 +363,10 @@ jobs:
 
           test -f "$STRINGS_FILE"
           test -f "$MANIFEST_FILE"
+
+          # --------------------------------------------------------
+          # Verify AdMob App ID
+          # --------------------------------------------------------
 
           grep -Fq \
             'name="admob_app_id"' \
@@ -383,7 +389,24 @@ jobs:
               exit 1
           }
 
-          echo "AdMob Android configuration verified."
+          # --------------------------------------------------------
+          # Verify Advertising ID permission
+          # --------------------------------------------------------
+
+          grep -Fq \
+            'com.google.android.gms.permission.AD_ID' \
+            "$MANIFEST_FILE" || {
+              echo "ERROR: AD_ID permission is missing from AndroidManifest.xml."
+              exit 1
+          }
+
+          echo "================================"
+          echo "ADMOB CONFIGURATION VERIFIED"
+          echo "================================"
+          echo "AdMob App ID: OK"
+          echo "AdMob metadata: OK"
+          echo "AD_ID permission: OK"
+          echo "================================"
 
 
       # ============================================================
@@ -572,7 +595,7 @@ jobs:
           from pathlib import Path
           import re
 
-          VERSION_CODE = 11712
+          VERSION_CODE = 11800
           VERSION_NAME = "1.18.0"
 
           path = Path("android/app/build.gradle")
@@ -728,7 +751,7 @@ jobs:
           print("POCKETRULE RELEASE CONFIGURED")
           print("================================")
           print("Version name: 1.18.0")
-          print("Version code: 11712")
+          print("Version code: 11800")
           print("Release signing: configured")
           print("================================")
           PY
@@ -761,9 +784,9 @@ jobs:
                   f"Found {len(codes)}."
               )
 
-          if codes[0] != "11712":
+          if codes[0] != "11800":
               raise SystemExit(
-                  f"ERROR: Expected versionCode 11712. "
+                  f"ERROR: Expected versionCode 11800. "
                   f"Found {codes[0]}."
               )
 
@@ -793,7 +816,7 @@ jobs:
           print("ANDROID CONFIGURATION VERIFIED")
           print("================================")
           print("Version name: 1.18.0")
-          print("Version code: 11712")
+          print("Version code: 11800")
           print("Release signing: OK")
           print("================================")
           PY
@@ -831,7 +854,7 @@ jobs:
           set -euo pipefail
 
           SOURCE_AAB="android/app/build/outputs/bundle/release/app-release.aab"
-          RELEASE_AAB="release/PocketRule-v1.18.0-code11712.aab"
+          RELEASE_AAB="release/PocketRule-v1.18.0-code11800.aab"
 
           if [ ! -f "$SOURCE_AAB" ]; then
             echo "ERROR: AAB was not generated."
@@ -862,7 +885,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          FILE="release/PocketRule-v1.18.0-code11712.aab"
+          FILE="release/PocketRule-v1.18.0-code11800.aab"
 
           test -f "$FILE"
           test -s "$FILE"
@@ -891,7 +914,7 @@ jobs:
             -verify \
             -verbose \
             -certs \
-            release/PocketRule-v1.18.0-code11712.aab
+            release/PocketRule-v1.18.0-code11800.aab
 
           echo "AAB signature verification passed."
 
@@ -904,8 +927,8 @@ jobs:
         id: upload_aab
         uses: actions/upload-artifact@v7
         with:
-          name: PocketRule-AAB-v1.18.0-code11712
-          path: release/PocketRule-v1.18.0-code11712.aab
+          name: PocketRule-AAB-v1.18.0-code11800
+          path: release/PocketRule-v1.18.0-code11800.aab
           if-no-files-found: error
           retention-days: 30
 
@@ -931,9 +954,10 @@ jobs:
           echo "================================"
           echo "Artifact ID: $ARTIFACT_ID"
           echo "Artifact URL: $ARTIFACT_URL"
-          echo "File: PocketRule-v1.18.0-code11712.aab"
+          echo "File: PocketRule-v1.18.0-code11800.aab"
           echo "Version: 1.18.0"
-          echo "Version code: 11712"
+          echo "Version code: 11800"
+          echo "AD_ID permission: CONFIGURED"
           echo "AdMob: CONFIGURED"
           echo "AdMob testing: ENABLED"
           echo "================================"
