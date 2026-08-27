@@ -184,24 +184,39 @@ jobs:
 
 
       # ============================================================
-      # 12. INSTALL ANDROID 16 SDK
+      # 12. SETUP ANDROID SDK
+      # ============================================================
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools"
+
+
+      # ============================================================
+      # 13. INSTALL ANDROID 16 SDK
       # ============================================================
 
       - name: Install Android 16 SDK
         run: |
           set -euo pipefail
 
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-
           sdkmanager \
             "platforms;android-36" \
             "build-tools;36.0.0"
 
-          echo "Android 16 SDK installed."
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+
+          echo "================================"
+          echo "ANDROID 16 SDK INSTALLED"
+          echo "================================"
+          echo "Platform: android-36"
+          echo "Build tools: 36.0.0"
+          echo "================================"
 
 
       # ============================================================
-      # 13. CONFIGURE ADMOB ANDROID APP ID
+      # 14. CONFIGURE ADMOB ANDROID APP ID
       # ============================================================
 
       - name: Configure Android AdMob App ID
@@ -315,7 +330,7 @@ jobs:
 
 
       # ============================================================
-      # 14. ANDROID 16 + REQUIRED PERMISSIONS
+      # 15. ANDROID 16 + REQUIRED PERMISSIONS
       # ============================================================
 
       - name: Configure Android 16 and permissions
@@ -379,7 +394,7 @@ jobs:
 
 
       # ============================================================
-      # 15. FORCE COMPILE SDK 36 + TARGET SDK 36
+      # 16. FORCE COMPILE SDK 36 + TARGET SDK 36
       # ============================================================
 
       - name: Configure Android API 36
@@ -495,7 +510,7 @@ jobs:
 
 
       # ============================================================
-      # 16. VERIFY ADMOB + ANDROID 16
+      # 17. VERIFY ADMOB + ANDROID 16
       # ============================================================
 
       - name: Verify Android and AdMob configuration
@@ -604,7 +619,7 @@ jobs:
 
 
       # ============================================================
-      # 17. JAVA
+      # 18. JAVA
       # ============================================================
 
       - name: Setup Java
@@ -615,7 +630,7 @@ jobs:
 
 
       # ============================================================
-      # 18. VALIDATE SIGNING SECRETS
+      # 19. VALIDATE SIGNING SECRETS
       # ============================================================
 
       - name: Validate signing secrets
@@ -651,7 +666,7 @@ jobs:
 
 
       # ============================================================
-      # 19. DECODE KEYSTORE
+      # 20. DECODE KEYSTORE
       # ============================================================
 
       - name: Decode upload keystore
@@ -675,7 +690,7 @@ jobs:
 
 
       # ============================================================
-      # 20. DETECT KEYSTORE TYPE
+      # 21. DETECT KEYSTORE TYPE
       # ============================================================
 
       - name: Detect keystore type
@@ -722,7 +737,7 @@ jobs:
 
 
       # ============================================================
-      # 21. VERIFY KEYSTORE
+      # 22. VERIFY KEYSTORE
       # ============================================================
 
       - name: Verify keystore
@@ -753,7 +768,7 @@ jobs:
 
 
       # ============================================================
-      # 22. VERIFY PRIVATE KEY
+      # 23. VERIFY PRIVATE KEY
       # ============================================================
 
       - name: Verify private key
@@ -778,7 +793,7 @@ jobs:
 
 
       # ============================================================
-      # 23. CONFIGURE VERSION + SIGNING
+      # 24. CONFIGURE VERSION + SIGNING
       # ============================================================
 
       - name: Configure Android release
@@ -871,312 +886,4 @@ jobs:
               for i in range(brace, len(text)):
                   if text[i] == "{":
                       depth += 1
-                  elif text[i] == "}":
-                      depth -= 1
-
-                      if depth == 0:
-                          end = i + 1
-                          break
-
-              if end is None:
-                  raise SystemExit(
-                      "ERROR: Could not parse signingConfigs."
-                  )
-
-              text = (
-                  text[:start]
-                  + signing_block
-                  + text[end:]
-              )
-
-          else:
-
-              android_match = re.search(
-                  r"\bandroid\s*\{",
-                  text
-              )
-
-              if not android_match:
-                  raise SystemExit(
-                      "ERROR: android block not found."
-                  )
-
-              position = android_match.end()
-
-              block = (
-                  "\n\n    "
-                  + signing_block.replace(
-                      "\n",
-                      "\n    "
-                  )
-              )
-
-              text = (
-                  text[:position]
-                  + block
-                  + text[position:]
-              )
-
-          # --------------------------------------------------------
-          # RELEASE SIGNING
-          # --------------------------------------------------------
-
-          release_match = re.search(
-              r"(buildTypes\s*\{\s*release\s*\{)",
-              text
-          )
-
-          if not release_match:
-              raise SystemExit(
-                  "ERROR: release build type not found."
-              )
-
-          if "signingConfig signingConfigs.release" not in text:
-              text = re.sub(
-                  r"(buildTypes\s*\{\s*release\s*\{)",
-                  r"\1\n            signingConfig signingConfigs.release",
-                  text,
-                  count=1
-              )
-
-          path.write_text(text)
-
-          print("================================")
-          print("POCKETRULE RELEASE CONFIGURED")
-          print("================================")
-          print("Version name: 1.18.1")
-          print("Version code: 11801")
-          print("compileSdk: 36")
-          print("targetSdk: 36")
-          print("Release signing: configured")
-          print("================================")
-          PY
-
-
-      # ============================================================
-      # 24. VERIFY VERSION + SIGNING
-      # ============================================================
-
-      - name: Verify Android configuration
-        run: |
-          set -euo pipefail
-
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          text = Path(
-              "android/app/build.gradle"
-          ).read_text()
-
-          codes = re.findall(
-              r"\bversionCode\s+(\d+)",
-              text
-          )
-
-          if len(codes) != 1:
-              raise SystemExit(
-                  f"ERROR: Expected exactly one versionCode. "
-                  f"Found {len(codes)}."
-              )
-
-          if codes[0] != "11801":
-              raise SystemExit(
-                  f"ERROR: Expected versionCode 11801. "
-                  f"Found {codes[0]}."
-              )
-
-          names = re.findall(
-              r'\bversionName\s+["\']([^"\']+)["\']',
-              text
-          )
-
-          if len(names) != 1:
-              raise SystemExit(
-                  f"ERROR: Expected exactly one versionName. "
-                  f"Found {len(names)}."
-              )
-
-          if names[0] != "1.18.1":
-              raise SystemExit(
-                  f"ERROR: Expected versionName 1.18.1. "
-                  f"Found {names[0]}."
-              )
-
-          compile_matches = re.findall(
-              r'\bcompileSdk\s+(\d+)',
-              text
-          )
-
-          target_matches = re.findall(
-              r'\btargetSdk\s+(\d+)',
-              text
-          )
-
-          if not compile_matches or compile_matches[0] != "36":
-              raise SystemExit(
-                  "ERROR: compileSdk is not 36."
-              )
-
-          if not target_matches or target_matches[0] != "36":
-              raise SystemExit(
-                  "ERROR: targetSdk is not 36."
-              )
-
-          if "signingConfig signingConfigs.release" not in text:
-              raise SystemExit(
-                  "ERROR: Release signing is not configured."
-              )
-
-          print("================================")
-          print("ANDROID CONFIGURATION VERIFIED")
-          print("================================")
-          print("Version name: 1.18.1")
-          print("Version code: 11801")
-          print("compileSdk: 36")
-          print("targetSdk: 36")
-          print("Release signing: OK")
-          print("================================")
-          PY
-
-
-      # ============================================================
-      # 25. BUILD SIGNED AAB
-      # ============================================================
-
-      - name: Build signed release AAB
-        env:
-          KEYSTORE_TYPE: ${{ env.KEYSTORE_TYPE }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          EFFECTIVE_KEY_PASSWORD: ${{ env.EFFECTIVE_KEY_PASSWORD }}
-        working-directory: android
-        run: |
-          set -euo pipefail
-
-          chmod +x gradlew
-
-          ./gradlew clean
-
-          ./gradlew bundleRelease \
-            --no-daemon \
-            --stacktrace
-
-
-      # ============================================================
-      # 26. PREPARE AAB
-      # ============================================================
-
-      - name: Prepare AAB artifact
-        run: |
-          set -euo pipefail
-
-          SOURCE_AAB="android/app/build/outputs/bundle/release/app-release.aab"
-          RELEASE_AAB="release/PocketRule-v1.18.1-code11801.aab"
-
-          if [ ! -f "$SOURCE_AAB" ]; then
-            echo "ERROR: AAB was not generated."
-            echo ""
-            find android -type f -name "*.aab" -print || true
-            exit 1
-          fi
-
-          mkdir -p release
-
-          cp "$SOURCE_AAB" "$RELEASE_AAB"
-
-          test -s "$RELEASE_AAB" || {
-            echo "ERROR: Prepared AAB is empty."
-            exit 1
-          }
-
-          echo "AAB prepared successfully:"
-          ls -lh "$RELEASE_AAB"
-
-
-      # ============================================================
-      # 27. VERIFY AAB
-      # ============================================================
-
-      - name: Verify AAB
-        run: |
-          set -euo pipefail
-
-          FILE="release/PocketRule-v1.18.1-code11801.aab"
-
-          test -f "$FILE"
-          test -s "$FILE"
-
-          SIZE=$(stat -c%s "$FILE")
-
-          echo "================================"
-          echo "AAB VERIFIED"
-          echo "================================"
-          echo "File: $FILE"
-          echo "Size: $SIZE bytes"
-          echo ""
-          echo "SHA256:"
-          sha256sum "$FILE"
-
-
-      # ============================================================
-      # 28. VERIFY AAB SIGNATURE
-      # ============================================================
-
-      - name: Verify AAB signature
-        run: |
-          set -euo pipefail
-
-          jarsigner \
-            -verify \
-            -verbose \
-            -certs \
-            release/PocketRule-v1.18.1-code11801.aab
-
-          echo "AAB signature verification passed."
-
-
-      # ============================================================
-      # 29. UPLOAD AAB ARTIFACT
-      # ============================================================
-
-      - name: Upload PocketRule AAB
-        id: upload_aab
-        uses: actions/upload-artifact@v7
-        with:
-          name: PocketRule-AAB-v1.18.1-code11801
-          path: release/PocketRule-v1.18.1-code11801.aab
-          if-no-files-found: error
-          retention-days: 30
-
-
-      # ============================================================
-      # 30. CONFIRM ARTIFACT
-      # ============================================================
-
-      - name: Confirm artifact
-        env:
-          ARTIFACT_URL: ${{ steps.upload_aab.outputs.artifact-url }}
-          ARTIFACT_ID: ${{ steps.upload_aab.outputs.artifact-id }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "$ARTIFACT_ID" ]; then
-            echo "ERROR: GitHub did not return an artifact ID."
-            exit 1
-          fi
-
-          echo "================================"
-          echo "POCKETRULE AAB ARTIFACT READY"
-          echo "================================"
-          echo "Artifact ID: $ARTIFACT_ID"
-          echo "Artifact URL: $ARTIFACT_URL"
-          echo "File: PocketRule-v1.18.1-code11801.aab"
-          echo "Version: 1.18.1"
-          echo "Version code: 11801"
-          echo "compileSdk: 36"
-          echo "targetSdk: 36"
-          echo "AD_ID permission: CONFIGURED"
-          echo "AdMob: CONFIGURED"
-          echo "AdMob testing: ENABLED"
-          echo "================================"
+                 
