@@ -1,7 +1,7 @@
 import React, { Component, useState, useEffect, useRef } from "react";
 import { Capacitor } from "@capacitor/core";
 import { LocalNotifications } from "@capacitor/local-notifications";
-import { AdMob, AdmobConsentStatus, BannerAdSize, BannerAdPosition } from "@capacitor-community/admob";
+import { AdMob, AdmobConsentStatus, BannerAdSize, BannerAdPosition, BannerAdPluginEvents } from "@capacitor-community/admob";
 import {
   ArrowRight, ArrowLeft, Check, Eye, EyeOff, Share2, BookmarkPlus, BookmarkCheck, Minus,
   Globe2,
@@ -121,27 +121,82 @@ const CURRENCIES = [
 const POCKETRULE_REMINDER_ID = 481516;
 const POCKETRULE_NOTIFICATION_CHANNEL = "pocketrule-reminders-v2";
 const POCKETRULE_ADMOB_BANNER_ID = import.meta.env.VITE_ADMOB_BANNER_ID || "ca-app-pub-3940256099942544/6300978111";
-const POCKETRULE_ADMOB_ENABLED = String(import.meta.env.VITE_ADMOB_ENABLED ?? "true").toLowerCase() !== "false";
 const POCKETRULE_ADMOB_TESTING = String(import.meta.env.VITE_ADMOB_TESTING ?? "true").toLowerCase() !== "false";
+const POCKETRULE_ADMOB_ENABLED = String(import.meta.env.VITE_ADMOB_ENABLED ?? "true").toLowerCase() !== "false";
 
 let pocketRuleAdMobInitialized = false;
 let pocketRuleAdMobConsentPromise = null;
+let pocketRuleAdMobListenersReady = false;
+
+async function setupPocketRuleAdMobListeners() {
+  if (!isNativeApp() || pocketRuleAdMobListenersReady) return;
+
+  pocketRuleAdMobListenersReady = true;
+
+  try {
+    await AdMob.addListener(BannerAdPluginEvents.Loaded, (info) => {
+      console.log("PocketRule AdMob banner loaded:", info);
+    });
+
+    await AdMob.addListener(BannerAdPluginEvents.FailedToLoad, (error) => {
+      console.error("PocketRule AdMob banner failed to load:", error);
+    });
+
+    await AdMob.addListener(BannerAdPluginEvents.Opened, () => {
+      console.log("PocketRule AdMob banner opened.");
+    });
+
+    await AdMob.addListener(BannerAdPluginEvents.Closed, () => {
+      console.log("PocketRule AdMob banner closed.");
+    });
+
+    await AdMob.addListener(BannerAdPluginEvents.SizeChanged, (size) => {
+      console.log("PocketRule AdMob banner size changed:", size);
+    });
+  } catch (error) {
+    console.error("PocketRule AdMob listener setup failed:", error);
+  }
+}
 
 async function startPocketRuleAdMob() {
-  if (!isNativeApp() || !POCKETRULE_ADMOB_ENABLED) return false;
+  if (!isNativeApp() || !POCKETRULE_ADMOB_ENABLED) {
+    console.log("PocketRule AdMob skipped:", {
+      native: isNativeApp(),
+      enabled: POCKETRULE_ADMOB_ENABLED,
+    });
+    return false;
+  }
 
   try {
     if (!pocketRuleAdMobInitialized) {
-      await AdMob.initialize();
+      await AdMob.initialize({
+        initializeForTesting: POCKETRULE_ADMOB_TESTING,
+      });
       pocketRuleAdMobInitialized = true;
+      console.log("PocketRule AdMob initialized.");
     }
+
+    await setupPocketRuleAdMobListeners();
 
     if (!pocketRuleAdMobConsentPromise) {
       pocketRuleAdMobConsentPromise = (async () => {
         let consentInfo = await AdMob.requestConsentInfo();
 
-        if (!consentInfo.canRequestAds && consentInfo.isConsentFormAvailable) {
+        console.log("PocketRule AdMob consent info:", consentInfo);
+
+        if (
+          !consentInfo.canRequestAds &&
+          consentInfo.isConsentFormAvailable
+        ) {
           consentInfo = await AdMob.showConsentForm();
+          console.log("PocketRule AdMob consent result:", consentInfo);
+        }
+
+        if (!consentInfo.canRequestAds) {
+          console.warn(
+            "PocketRule AdMob cannot request ads yet. " +
+            "Consent/status does not currently allow an ad request."
+          );
         }
 
         return Boolean(consentInfo.canRequestAds);
@@ -157,8 +212,21 @@ async function startPocketRuleAdMob() {
 }
 
 async function showPocketRuleBanner() {
-  if (!(await startPocketRuleAdMob())) return;
+  if (!isNativeApp()) return;
+
+  const canRequestAds = await startPocketRuleAdMob();
+
+  if (!canRequestAds) {
+    console.warn("PocketRule banner not shown because ads cannot be requested.");
+    return;
+  }
+
   try {
+    console.log("PocketRule showing AdMob banner:", {
+      adId: POCKETRULE_ADMOB_BANNER_ID,
+      isTesting: POCKETRULE_ADMOB_TESTING,
+    });
+
     await AdMob.showBanner({
       adId: POCKETRULE_ADMOB_BANNER_ID,
       adSize: BannerAdSize.ADAPTIVE_BANNER,
@@ -173,9 +241,12 @@ async function showPocketRuleBanner() {
 
 async function hidePocketRuleBanner() {
   if (!isNativeApp()) return;
-  try { await AdMob.hideBanner(); } catch {}
+  try {
+    await AdMob.hideBanner();
+  } catch (error) {
+    console.warn("PocketRule banner hide failed:", error);
+  }
 }
-
 
 const POCKETRULE_REMINDER_TITLE = "Money Reminder";
 const POCKETRULE_REMINDER_BODY = "You’re expecting money today. Open PocketRule and decide where it goes.";
@@ -4470,6 +4541,14 @@ function PocketRuleAppInner() {
     if (mq.addEventListener) mq.addEventListener("change", handler); else mq.addListener(handler);
     return () => { if (mq.removeEventListener) mq.removeEventListener("change", handler); else mq.removeListener(handler); };
   }, [data.settings.appearance]);
+
+  useEffect(() => {
+    if (!loaded || !isNativeApp()) return;
+
+    startPocketRuleAdMob().catch((error) => {
+      console.error("PocketRule AdMob startup failed:", error);
+    });
+  }, [loaded]);
 
   useEffect(() => {
     if (!loaded || !isNativeApp()) return;
