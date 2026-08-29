@@ -414,10 +414,6 @@ jobs:
 
           text = path.read_text()
 
-          # --------------------------------------------------------
-          # COMPILE SDK
-          # --------------------------------------------------------
-
           compile_patterns = [
               r'\bcompileSdkVersion\s+\d+',
               r'\bcompileSdk\s*=\s*\d+',
@@ -455,10 +451,6 @@ jobs:
                   + "\n    compileSdk 36"
                   + text[position:]
               )
-
-          # --------------------------------------------------------
-          # TARGET SDK
-          # --------------------------------------------------------
 
           target_patterns = [
               r'\btargetSdkVersion\s+\d+',
@@ -527,10 +519,6 @@ jobs:
           test -f "$MANIFEST_FILE"
           test -f "$GRADLE_FILE"
 
-          # --------------------------------------------------------
-          # ADMOB APP ID
-          # --------------------------------------------------------
-
           grep -Fq \
             'name="admob_app_id"' \
             "$STRINGS_FILE" || {
@@ -552,20 +540,12 @@ jobs:
               exit 1
           }
 
-          # --------------------------------------------------------
-          # AD_ID
-          # --------------------------------------------------------
-
           grep -Fq \
             'com.google.android.gms.permission.AD_ID' \
             "$MANIFEST_FILE" || {
               echo "ERROR: AD_ID permission is missing."
               exit 1
           }
-
-          # --------------------------------------------------------
-          # API 36
-          # --------------------------------------------------------
 
           python3 - <<'PY'
           from pathlib import Path
@@ -804,8 +784,8 @@ jobs:
           from pathlib import Path
           import re
 
-          VERSION_CODE = 11804
-          VERSION_NAME = "1.18.4"
+          VERSION_CODE = 11805
+          VERSION_NAME = "1.18.5"
 
           path = Path("android/app/build.gradle")
 
@@ -815,10 +795,6 @@ jobs:
               )
 
           text = path.read_text()
-
-          # --------------------------------------------------------
-          # VERSION CODE
-          # --------------------------------------------------------
 
           code_matches = re.findall(
               r"\bversionCode\s+\d+",
@@ -836,10 +812,6 @@ jobs:
               text
           )
 
-          # --------------------------------------------------------
-          # VERSION NAME
-          # --------------------------------------------------------
-
           name_matches = re.findall(
               r'\bversionName\s+["\'][^"\']+["\']',
               text
@@ -855,10 +827,6 @@ jobs:
               f'versionName "{VERSION_NAME}"',
               text
           )
-
-          # --------------------------------------------------------
-          # SIGNING CONFIG
-          # --------------------------------------------------------
 
           signing_block = """signingConfigs {
               release {
@@ -932,10 +900,6 @@ jobs:
                   + text[position:]
               )
 
-          # --------------------------------------------------------
-          # RELEASE SIGNING
-          # --------------------------------------------------------
-
           release_match = re.search(
               r"(buildTypes\s*\{\s*release\s*\{)",
               text
@@ -959,8 +923,8 @@ jobs:
           print("================================")
           print("POCKETRULE RELEASE CONFIGURED")
           print("================================")
-          print("Version name: 1.18.4")
-          print("Version code: 11804")
+          print("Version name: 1.18.5")
+          print("Version code: 11805")
           print("compileSdk: 36")
           print("targetSdk: 36")
           print("Release signing: configured")
@@ -995,9 +959,9 @@ jobs:
                   f"Found {len(codes)}."
               )
 
-          if codes[0] != "11804":
+          if codes[0] != "11805":
               raise SystemExit(
-                  f"ERROR: Expected versionCode 11804. "
+                  f"ERROR: Expected versionCode 11805. "
                   f"Found {codes[0]}."
               )
 
@@ -1012,9 +976,9 @@ jobs:
                   f"Found {len(names)}."
               )
 
-          if names[0] != "1.18.4":
+          if names[0] != "1.18.5":
               raise SystemExit(
-                  f"ERROR: Expected versionName 1.18.4. "
+                  f"ERROR: Expected versionName 1.18.5. "
                   f"Found {names[0]}."
               )
 
@@ -1046,8 +1010,8 @@ jobs:
           print("================================")
           print("ANDROID CONFIGURATION VERIFIED")
           print("================================")
-          print("Version name: 1.18.4")
-          print("Version code: 11804")
+          print("Version name: 1.18.5")
+          print("Version code: 11805")
           print("compileSdk: 36")
           print("targetSdk: 36")
           print("Release signing: OK")
@@ -1056,7 +1020,7 @@ jobs:
 
 
       # ============================================================
-      # 26. BUILD SIGNED AAB
+      # 26. BUILD SIGNED RELEASE AAB
       # ============================================================
 
       - name: Build signed release AAB
@@ -1087,7 +1051,7 @@ jobs:
           set -euo pipefail
 
           SOURCE_AAB="android/app/build/outputs/bundle/release/app-release.aab"
-          RELEASE_AAB="release/PocketRule-v1.18.4-code11804.aab"
+          RELEASE_AAB="release/PocketRule-v1.18.5-code11805.aab"
 
           if [ ! -f "$SOURCE_AAB" ]; then
             echo "ERROR: AAB was not generated."
@@ -1117,7 +1081,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          FILE="release/PocketRule-v1.18.4-code11804.aab"
+          FILE="release/PocketRule-v1.18.5-code11805.aab"
 
           test -f "$FILE"
           test -s "$FILE"
@@ -1146,7 +1110,7 @@ jobs:
             -verify \
             -verbose \
             -certs \
-            release/PocketRule-v1.18.4-code11804.aab
+            release/PocketRule-v1.18.5-code11805.aab
 
           echo "AAB signature verification passed."
 
@@ -1159,8 +1123,8 @@ jobs:
         id: upload_aab
         uses: actions/upload-artifact@v7
         with:
-          name: PocketRule-AAB-v1.18.4-code11804
-          path: release/PocketRule-v1.18.4-code11804.aab
+          name: PocketRule-AAB-v1.18.5-code11805
+          path: release/PocketRule-v1.18.5-code11805.aab
           if-no-files-found: error
           retention-days: 30
 
@@ -1186,9 +1150,9 @@ jobs:
           echo "================================"
           echo "Artifact ID: $ARTIFACT_ID"
           echo "Artifact URL: $ARTIFACT_URL"
-          echo "File: PocketRule-v1.18.4-code11804.aab"
-          echo "Version: 1.18.4"
-          echo "Version code: 11804"
+          echo "File: PocketRule-v1.18.5-code11805.aab"
+          echo "Version: 1.18.5"
+          echo "Version code: 11805"
           echo "compileSdk: 36"
           echo "targetSdk: 36"
           echo "AD_ID permission: CONFIGURED"
