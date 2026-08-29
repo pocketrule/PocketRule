@@ -937,7 +937,7 @@ jobs:
           # --------------------------------------------------------
 
           release_match = re.search(
-              r"(buildTypes\s*\{\s*release\s*\})",
+              r"(buildTypes\s*\{\s*release\s*\{)",
               text
           )
 
