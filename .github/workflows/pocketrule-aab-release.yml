@@ -257,9 +257,9 @@ jobs:
           )
 
           pattern = (
-              r'\s*<string\s+'
-              r'name=["\']admob_app_id["\']'
-              r'[^>]*>.*?</string>'
+              r"""\s*<string\s+"""
+              r"""name=["']admob_app_id["']"""
+              r"""[^>]*>.*?</string>"""
           )
 
           if re.search(pattern, text, flags=re.DOTALL):
@@ -286,9 +286,9 @@ jobs:
               android:value="@string/admob_app_id" />"""
 
           metadata_pattern = re.compile(
-              r'\s*<meta-data\s+'
-              r'android:name=["\']com\.google\.android\.gms\.ads\.APPLICATION_ID["\']'
-              r'[^>]*/?>',
+              r"""\s*<meta-data\s+"""
+              r"""android:name=["']com\.google\.android\.gms\.ads\.APPLICATION_ID["']"""
+              r"""[^>]*/?>""",
               re.DOTALL
           )
 
@@ -300,7 +300,7 @@ jobs:
               )
           else:
               application_match = re.search(
-                  r'(<application\b[^>]*>)',
+                  r"""(<application\b[^>]*>)""",
                   manifest_text
               )
 
@@ -353,7 +353,7 @@ jobs:
 
           for permission in permissions:
               match = re.search(
-                  r'android:name="([^"]+)"',
+                  r"""android:name="([^"]+)"""",
                   permission
               )
 
@@ -364,10 +364,7 @@ jobs:
 
               permission_name = match.group(1)
 
-              if (
-                  f'android:name="{permission_name}"'
-                  not in text
-              ):
+              if f'android:name="{permission_name}"' not in text:
                   text = text.replace(
                       "</manifest>",
                       f"    {permission}\n</manifest>",
@@ -408,9 +405,9 @@ jobs:
           text = path.read_text()
 
           compile_patterns = [
-              r'\bcompileSdkVersion\s+\d+',
-              r'\bcompileSdk\s*=\s*\d+',
-              r'\bcompileSdk\s+\d+'
+              r"""\bcompileSdkVersion\s+\d+""",
+              r"""\bcompileSdk\s*=\s*\d+""",
+              r"""\bcompileSdk\s+\d+"""
           ]
 
           replaced_compile = False
@@ -419,7 +416,7 @@ jobs:
               if re.search(pattern, text):
                   text = re.sub(
                       pattern,
-                      'compileSdk 36',
+                      "compileSdk 36",
                       text,
                       count=1
                   )
@@ -428,7 +425,7 @@ jobs:
 
           if not replaced_compile:
               android_match = re.search(
-                  r'\bandroid\s*\{',
+                  r"""\bandroid\s*\{""",
                   text
               )
 
@@ -446,9 +443,9 @@ jobs:
               )
 
           target_patterns = [
-              r'\btargetSdkVersion\s+\d+',
-              r'\btargetSdk\s*=\s*\d+',
-              r'\btargetSdk\s+\d+'
+              r"""\btargetSdkVersion\s+\d+""",
+              r"""\btargetSdk\s*=\s*\d+""",
+              r"""\btargetSdk\s+\d+"""
           ]
 
           replaced_target = False
@@ -457,7 +454,7 @@ jobs:
               if re.search(pattern, text):
                   text = re.sub(
                       pattern,
-                      'targetSdk 36',
+                      "targetSdk 36",
                       text,
                       count=1
                   )
@@ -466,7 +463,7 @@ jobs:
 
           if not replaced_target:
               default_config_match = re.search(
-                  r'\bdefaultConfig\s*\{',
+                  r"""\bdefaultConfig\s*\{""",
                   text
               )
 
@@ -547,12 +544,12 @@ jobs:
           text = Path("android/app/build.gradle").read_text()
 
           compile_matches = re.findall(
-              r'\bcompileSdk\s+(\d+)',
+              r"""\bcompileSdk\s+(\d+)""",
               text
           )
 
           target_matches = re.findall(
-              r'\btargetSdk\s+(\d+)',
+              r"""\btargetSdk\s+(\d+)""",
               text
           )
 
@@ -563,8 +560,7 @@ jobs:
 
           if compile_matches[0] != "36":
               raise SystemExit(
-                  f"ERROR: compileSdk is "
-                  f"{compile_matches[0]}, expected 36."
+                  f"ERROR: compileSdk is {compile_matches[0]}, expected 36."
               )
 
           if not target_matches:
@@ -574,8 +570,7 @@ jobs:
 
           if target_matches[0] != "36":
               raise SystemExit(
-                  f"ERROR: targetSdk is "
-                  f"{target_matches[0]}, expected 36."
+                  f"ERROR: targetSdk is {target_matches[0]}, expected 36."
               )
 
           print("================================")
@@ -667,24 +662,502 @@ jobs:
       - name: Detect keystore type
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           set -euo pipefail
 
-          if keytool \
+          python3 - <<'PY'
+          import os
+          import subprocess
+          from pathlib import Path
+
+          keystore = Path("android/upload-keystore-original")
+          store_password = os.environ["KEYSTORE_PASSWORD"]
+          key_password = os.environ["KEY_PASSWORD"]
+
+          if not keystore.exists():
+              raise SystemExit(
+                  "ERROR: Keystore file does not exist."
+              )
+
+          def check_keystore(store_type):
+              result = subprocess.run(
+                  [
+                      "keytool",
+                      "-list",
+                      "-storetype",
+                      store_type,
+                      "-keystore",
+                      str(keystore),
+                      "-storepass",
+                      store_password
+                  ],
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+                  text=True
+              )
+              return result.returncode == 0, result.stderr
+
+          p12_ok, p12_error = check_keystore("PKCS12")
+
+          if p12_ok:
+              with open(os.environ["GITHUB_ENV"], "a") as env:
+                  env.write("KEYSTORE_TYPE=PKCS12\n")
+                  env.write(
+                      f"EFFECTIVE_KEY_PASSWORD={store_password}\n"
+                  )
+
+              print("Keystore type: PKCS12")
+
+          else:
+              jks_ok, jks_error = check_keystore("JKS")
+
+              if jks_ok:
+                  with open(os.environ["GITHUB_ENV"], "a") as env:
+                      env.write("KEYSTORE_TYPE=JKS\n")
+                      env.write(
+                          f"EFFECTIVE_KEY_PASSWORD={key_password}\n"
+                      )
+
+                  print("Keystore type: JKS")
+
+              else:
+                  print("ERROR: Unable to identify keystore.")
+                  print("")
+                  print("PKCS12 check failed:")
+                  print(p12_error)
+                  print("")
+                  print("JKS check failed:")
+                  print(jks_error)
+                  raise SystemExit(1)
+          PY
+
+
+      # ============================================================
+      # 22. VERIFY KEYSTORE
+      # ============================================================
+
+      - name: Verify keystore
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+
+          keytool \
             -list \
-            -storetype PKCS12 \
+            -v \
+            -storetype "$KEYSTORE_TYPE" \
             -keystore android/upload-keystore-original \
             -storepass "$KEYSTORE_PASSWORD" \
-            >/tmp/p12.txt 2>&1
-          then
+            >/tmp/keystore-info.txt
 
-            echo "KEYSTORE_TYPE=PKCS12" >> "$GITHUB_ENV"
-            echo "EFFECTIVE_KEY_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          if ! grep -Fq "Alias name: $KEY_ALIAS" /tmp/keystore-info.txt; then
+            echo "ERROR: Alias was not found."
 
-            echo "Keystore type: PKCS12"
+            echo "Available aliases:"
+            grep "Alias name:" /tmp/keystore-info.txt || true
 
-          elif keytool \
-            -list \
-            -storetype JKS \
+            exit 1
+          fi
+
+          echo "Keystore and alias verified."
+
+
+      # ============================================================
+      # 23. VERIFY PRIVATE KEY
+      # ============================================================
+
+      - name: Verify private key
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+
+          keytool \
+            -certreq \
+            -alias "$KEY_ALIAS" \
             -keystore android/upload-keystore-original \
-            -
+            -storetype "$KEYSTORE_TYPE" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -keypass "$EFFECTIVE_KEY_PASSWORD" \
+            -file /tmp/test.csr
+
+          rm -f /tmp/test.csr
+
+          echo "Private key verified."
+
+
+      # ============================================================
+      # 24. CONFIGURE VERSION + SIGNING
+      # ============================================================
+
+      - name: Configure Android release
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          VERSION_CODE = 11803
+          VERSION_NAME = "1.18.3"
+
+          path = Path("android/app/build.gradle")
+
+          if not path.exists():
+              raise SystemExit(
+                  "ERROR: android/app/build.gradle not found."
+              )
+
+          text = path.read_text()
+
+          code_pattern = r"""\bversionCode\s+\d+"""
+          name_pattern = r"""\bversionName\s+["'][^"']+["']"""
+
+          if not re.search(code_pattern, text):
+              raise SystemExit(
+                  "ERROR: versionCode not found."
+              )
+
+          if not re.search(name_pattern, text):
+              raise SystemExit(
+                  "ERROR: versionName not found."
+              )
+
+          text = re.sub(
+              code_pattern,
+              f"versionCode {VERSION_CODE}",
+              text
+          )
+
+          text = re.sub(
+              name_pattern,
+              f'versionName "{VERSION_NAME}"',
+              text
+          )
+
+          signing_block = """signingConfigs {
+              release {
+                  storeFile file("../upload-keystore-original")
+                  storeType System.getenv("KEYSTORE_TYPE")
+                  storePassword System.getenv("KEYSTORE_PASSWORD")
+                  keyAlias System.getenv("KEY_ALIAS")
+                  keyPassword System.getenv("EFFECTIVE_KEY_PASSWORD")
+              }
+          }"""
+
+          signing_match = re.search(
+              r"""\bsigningConfigs\s*\{""",
+              text
+          )
+
+          if signing_match:
+              start = signing_match.start()
+              brace = text.find("{", start)
+
+              depth = 0
+              end = None
+
+              for i in range(brace, len(text)):
+                  if text[i] == "{":
+                      depth += 1
+                  elif text[i] == "}":
+                      depth -= 1
+
+                      if depth == 0:
+                          end = i + 1
+                          break
+
+              if end is None:
+                  raise SystemExit(
+                      "ERROR: Could not parse signingConfigs."
+                  )
+
+              text = (
+                  text[:start]
+                  + signing_block
+                  + text[end:]
+              )
+
+          else:
+              android_match = re.search(
+                  r"""\bandroid\s*\{""",
+                  text
+              )
+
+              if not android_match:
+                  raise SystemExit(
+                      "ERROR: android block not found."
+                  )
+
+              position = android_match.end()
+
+              block = (
+                  "\n\n    "
+                  + signing_block.replace(
+                      "\n",
+                      "\n    "
+                  )
+              )
+
+              text = (
+                  text[:position]
+                  + block
+                  + text[position:]
+              )
+
+          release_pattern = (
+              r"""(buildTypes\s*\{\s*release\s*\{)"""
+          )
+
+          if not re.search(release_pattern, text):
+              raise SystemExit(
+                  "ERROR: release build type not found."
+              )
+
+          if "signingConfig signingConfigs.release" not in text:
+              text = re.sub(
+                  release_pattern,
+                  r"""\1
+            signingConfig signingConfigs.release""",
+                  text,
+                  count=1
+              )
+
+          path.write_text(text)
+
+          print("================================")
+          print("POCKETRULE RELEASE CONFIGURED")
+          print("================================")
+          print("Version name: 1.18.3")
+          print("Version code: 11803")
+          print("compileSdk: 36")
+          print("targetSdk: 36")
+          print("Release signing: configured")
+          print("================================")
+          PY
+
+
+      # ============================================================
+      # 25. VERIFY VERSION + SIGNING
+      # ============================================================
+
+      - name: Verify Android configuration
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          text = Path("android/app/build.gradle").read_text()
+
+          code_matches = re.findall(
+              r"""\bversionCode\s+(\d+)""",
+              text
+          )
+
+          if len(code_matches) != 1:
+              raise SystemExit(
+                  f"ERROR: Expected exactly one versionCode. Found {len(code_matches)}."
+              )
+
+          if code_matches[0] != "11803":
+              raise SystemExit(
+                  f"ERROR: Expected versionCode 11803. Found {code_matches[0]}."
+              )
+
+          name_matches = re.findall(
+              r"""\bversionName\s+["']([^"']+)["']""",
+              text
+          )
+
+          if len(name_matches) != 1:
+              raise SystemExit(
+                  f"ERROR: Expected exactly one versionName. Found {len(name_matches)}."
+              )
+
+          if name_matches[0] != "1.18.3":
+              raise SystemExit(
+                  f"ERROR: Expected versionName 1.18.3. Found {name_matches[0]}."
+              )
+
+          compile_matches = re.findall(
+              r"""\bcompileSdk\s+(\d+)""",
+              text
+          )
+
+          target_matches = re.findall(
+              r"""\btargetSdk\s+(\d+)""",
+              text
+          )
+
+          if not compile_matches or compile_matches[0] != "36":
+              raise SystemExit(
+                  "ERROR: compileSdk is not 36."
+              )
+
+          if not target_matches or target_matches[0] != "36":
+              raise SystemExit(
+                  "ERROR: targetSdk is not 36."
+              )
+
+          if "signingConfig signingConfigs.release" not in text:
+              raise SystemExit(
+                  "ERROR: Release signing is not configured."
+              )
+
+          print("================================")
+          print("ANDROID CONFIGURATION VERIFIED")
+          print("================================")
+          print("Version name: 1.18.3")
+          print("Version code: 11803")
+          print("compileSdk: 36")
+          print("targetSdk: 36")
+          print("Release signing: OK")
+          print("================================")
+          PY
+
+
+      # ============================================================
+      # 26. BUILD SIGNED RELEASE AAB
+      # ============================================================
+
+      - name: Build signed release AAB
+        env:
+          KEYSTORE_TYPE: ${{ env.KEYSTORE_TYPE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          EFFECTIVE_KEY_PASSWORD: ${{ env.EFFECTIVE_KEY_PASSWORD }}
+        working-directory: android
+        run: |
+          set -euo pipefail
+
+          chmod +x gradlew
+
+          ./gradlew clean
+
+          ./gradlew bundleRelease \
+            --no-daemon \
+            --stacktrace
+
+
+      # ============================================================
+      # 27. PREPARE AAB
+      # ============================================================
+
+      - name: Prepare AAB artifact
+        run: |
+          set -euo pipefail
+
+          SOURCE_AAB="android/app/build/outputs/bundle/release/app-release.aab"
+          RELEASE_AAB="release/PocketRule-v1.18.3-code11803.aab"
+
+          if [ ! -f "$SOURCE_AAB" ]; then
+            echo "ERROR: AAB was not generated."
+            echo ""
+            find android -type f -name "*.aab" -print || true
+            exit 1
+          fi
+
+          mkdir -p release
+
+          cp "$SOURCE_AAB" "$RELEASE_AAB"
+
+          test -s "$RELEASE_AAB" || {
+            echo "ERROR: Prepared AAB is empty."
+            exit 1
+          }
+
+          echo "AAB prepared successfully:"
+          ls -lh "$RELEASE_AAB"
+
+
+      # ============================================================
+      # 28. VERIFY AAB
+      # ============================================================
+
+      - name: Verify AAB
+        run: |
+          set -euo pipefail
+
+          FILE="release/PocketRule-v1.18.3-code11803.aab"
+
+          test -f "$FILE"
+          test -s "$FILE"
+
+          SIZE=$(stat -c%s "$FILE")
+
+          echo "================================"
+          echo "AAB VERIFIED"
+          echo "================================"
+          echo "File: $FILE"
+          echo "Size: $SIZE bytes"
+          echo ""
+          echo "SHA256:"
+          sha256sum "$FILE"
+
+
+      # ============================================================
+      # 29. VERIFY AAB SIGNATURE
+      # ============================================================
+
+      - name: Verify AAB signature
+        run: |
+          set -euo pipefail
+
+          jarsigner \
+            -verify \
+            -verbose \
+            -certs \
+            release/PocketRule-v1.18.3-code11803.aab
+
+          echo "AAB signature verification passed."
+
+
+      # ============================================================
+      # 30. UPLOAD AAB ARTIFACT
+      # ============================================================
+
+      - name: Upload PocketRule AAB
+        id: upload_aab
+        uses: actions/upload-artifact@v7
+        with:
+          name: PocketRule-AAB-v1.18.3-code11803
+          path: release/PocketRule-v1.18.3-code11803.aab
+          if-no-files-found: error
+          retention-days: 30
+
+
+      # ============================================================
+      # 31. CONFIRM ARTIFACT
+      # ============================================================
+
+      - name: Confirm artifact
+        env:
+          ARTIFACT_URL: ${{ steps.upload_aab.outputs.artifact-url }}
+          ARTIFACT_ID: ${{ steps.upload_aab.outputs.artifact-id }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$ARTIFACT_ID" ]; then
+            echo "ERROR: GitHub did not return an artifact ID."
+            exit 1
+          fi
+
+          echo "================================"
+          echo "POCKETRULE AAB ARTIFACT READY"
+          echo "================================"
+          echo "Artifact ID: $ARTIFACT_ID"
+          echo "Artifact URL: $ARTIFACT_URL"
+          echo "File: PocketRule-v1.18.3-code11803.aab"
+          echo "Version: 1.18.3"
+          echo "Version code: 11803"
+          echo "compileSdk: 36"
+          echo "targetSdk: 36"
+          echo "AD_ID permission: CONFIGURED"
+          echo "AdMob: CONFIGURED"
+          echo "AdMob testing: ENABLED"
+          echo "================================"
