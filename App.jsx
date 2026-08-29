@@ -127,7 +127,6 @@ const POCKETRULE_ADMOB_ENABLED = String(import.meta.env.VITE_ADMOB_ENABLED ?? "t
 let pocketRuleAdMobInitialized = false;
 let pocketRuleAdMobConsentPromise = null;
 let pocketRuleAdMobListenersReady = false;
-let pocketRuleAdMobBannerVisible = false;
 
 async function setupPocketRuleAdMobListeners() {
   if (!isNativeApp() || pocketRuleAdMobListenersReady) return;
@@ -235,17 +234,15 @@ async function showPocketRuleBanner() {
       margin: 0,
       isTesting: POCKETRULE_ADMOB_TESTING,
     });
-    pocketRuleAdMobBannerVisible = true;
   } catch (error) {
     console.error("PocketRule banner failed to show:", error);
   }
 }
 
 async function hidePocketRuleBanner() {
-  if (!isNativeApp() || !pocketRuleAdMobBannerVisible) return;
+  if (!isNativeApp()) return;
   try {
     await AdMob.hideBanner();
-    pocketRuleAdMobBannerVisible = false;
   } catch (error) {
     console.warn("PocketRule banner hide failed:", error);
   }
@@ -427,7 +424,7 @@ function firePocketRuleReminder() {
   try { new Notification(POCKETRULE_REMINDER_TITLE, { body: POCKETRULE_REMINDER_BODY, tag: "pocketrule-reminder" }); } catch {}
 }
 
-const APP_VERSION = "1.18.3";
+const APP_VERSION = "1.18.4";
 const STORAGE_KEY = "pocketrule-state-v1";
 const ENCRYPTED_STORAGE_KEY = "pocketrule-state-v1-encrypted";
 const SECURITY_META_KEY = "pocketrule-security-meta-v1";
@@ -4014,7 +4011,7 @@ function BottomNav({ active, onNav }) {
         const Icon = it.icon;
         const isActive = active === it.id;
         return (
-          <button type="button" key={it.id} onClick={() => onNav(it.id)} style={{ flex: 1, background: "none", border: "none", padding: "6px 0 10px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "pointer", color: isActive ? GOLD : NAV_MUTED }}>
+          <button key={it.id} onClick={() => onNav(it.id)} style={{ flex: 1, background: "none", border: "none", padding: "6px 0 10px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "pointer", color: isActive ? GOLD : NAV_MUTED }}>
             <div style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", color: isActive ? GOLD : NAV_MUTED }}>
               <Icon size={19} strokeWidth={isActive ? 2.5 : 2.0} />
               {isActive && <span style={{ position: "absolute", bottom: -2, width: 18, height: 3, borderRadius: 99, background: GOLD }} />}
@@ -4545,12 +4542,23 @@ function PocketRuleAppInner() {
     return () => { if (mq.removeEventListener) mq.removeEventListener("change", handler); else mq.removeListener(handler); };
   }, [data.settings.appearance]);
 
-  // AdMob is intentionally kept out of the screen/navigation lifecycle.
-  // The Android AdMob plugin can interact with the WebView asynchronously;
-  // starting/showing a banner from a screen effect can race with React
-  // navigation and terminate the native WebView on some plugin versions.
-  // Navigation must remain completely independent of advertising.
+  useEffect(() => {
+    if (!loaded || !isNativeApp()) return;
 
+    startPocketRuleAdMob().catch((error) => {
+      console.error("PocketRule AdMob startup failed:", error);
+    });
+  }, [loaded]);
+
+  useEffect(() => {
+    if (!loaded || !isNativeApp()) return;
+    if (data.onboarded && screen === "resources") {
+      showPocketRuleBanner();
+    } else {
+      hidePocketRuleBanner();
+    }
+    return () => { hidePocketRuleBanner(); };
+  }, [loaded, data.onboarded, screen]);
 
   useEffect(() => {
     (async () => {
@@ -5304,11 +5312,7 @@ function PocketRuleAppInner() {
         />
 
         {loaded && data.onboarded && !isLocked && screen !== "share" && screen !== "ruleEditor" && screen !== "firstRule" && screen !== "historyDetail" && screen !== "ruleDetail" && screen !== "completedPlanDetail" && (
-          <BottomNav active={screen} onNav={(next) => {
-            if (next === screen) return;
-            if (next !== "resources") setResourceTarget(null);
-            setScreen(next);
-          }} />
+          <BottomNav active={screen} onNav={(next) => { if (next !== "resources") setResourceTarget(null); setScreen(next); }} />
         )}
 
         {pendingCurrency && (
