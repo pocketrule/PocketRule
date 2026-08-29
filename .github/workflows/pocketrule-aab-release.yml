@@ -243,13 +243,8 @@ jobs:
           import os
           import re
 
-          strings = Path(
-              "android/app/src/main/res/values/strings.xml"
-          )
-
-          manifest = Path(
-              "android/app/src/main/AndroidManifest.xml"
-          )
+          strings = Path("android/app/src/main/res/values/strings.xml")
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
 
           app_id = os.environ["ADMOB_APP_ID"]
 
@@ -264,4 +259,487 @@ jobs:
           pattern = (
               r'\s*<string\s+'
               r'name=["\']admob_app_id["\']'
-              r'[^>
+              r'[^>]*>.*?</string>'
+          )
+
+          if re.search(pattern, text, flags=re.DOTALL):
+              text = re.sub(
+                  pattern,
+                  "\n" + admob_line,
+                  text,
+                  count=1,
+                  flags=re.DOTALL
+              )
+          else:
+              text = text.replace(
+                  "</resources>",
+                  "\n" + admob_line + "\n</resources>",
+                  1
+              )
+
+          strings.write_text(text)
+
+          manifest_text = manifest.read_text()
+
+          metadata = """        <meta-data
+              android:name="com.google.android.gms.ads.APPLICATION_ID"
+              android:value="@string/admob_app_id" />"""
+
+          metadata_pattern = re.compile(
+              r'\s*<meta-data\s+'
+              r'android:name=["\']com\.google\.android\.gms\.ads\.APPLICATION_ID["\']'
+              r'[^>]*/?>',
+              re.DOTALL
+          )
+
+          if metadata_pattern.search(manifest_text):
+              manifest_text = metadata_pattern.sub(
+                  "\n" + metadata,
+                  manifest_text,
+                  count=1
+              )
+          else:
+              application_match = re.search(
+                  r'(<application\b[^>]*>)',
+                  manifest_text
+              )
+
+              if not application_match:
+                  raise SystemExit(
+                      "ERROR: Android application element not found."
+                  )
+
+              insert_at = application_match.end()
+
+              manifest_text = (
+                  manifest_text[:insert_at]
+                  + "\n"
+                  + metadata
+                  + manifest_text[insert_at:]
+              )
+
+          manifest.write_text(manifest_text)
+
+          print("AdMob Android App ID configured.")
+          PY
+
+
+      # ============================================================
+      # 15. ANDROID 16 + REQUIRED PERMISSIONS
+      # ============================================================
+
+      - name: Configure Android 16 and permissions
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+
+          if not manifest.exists():
+              raise SystemExit(
+                  "ERROR: AndroidManifest.xml not found."
+              )
+
+          text = manifest.read_text()
+
+          permissions = [
+              '<uses-permission android:name="com.google.android.gms.permission.AD_ID" />',
+              '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
+              '<uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />'
+          ]
+
+          for permission in permissions:
+              match = re.search(
+                  r'android:name="([^"]+)"',
+                  permission
+              )
+
+              if not match:
+                  raise SystemExit(
+                      "ERROR: Could not determine permission name."
+                  )
+
+              permission_name = match.group(1)
+
+              if (
+                  f'android:name="{permission_name}"'
+                  not in text
+              ):
+                  text = text.replace(
+                      "</manifest>",
+                      f"    {permission}\n</manifest>",
+                      1
+                  )
+
+          manifest.write_text(text)
+
+          print("================================")
+          print("ANDROID PERMISSIONS CONFIGURED")
+          print("================================")
+          print("AD_ID: OK")
+          print("POST_NOTIFICATIONS: OK")
+          print("SCHEDULE_EXACT_ALARM: OK")
+          print("================================")
+          PY
+
+
+      # ============================================================
+      # 16. FORCE COMPILE SDK 36 + TARGET SDK 36
+      # ============================================================
+
+      - name: Configure Android API 36
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("android/app/build.gradle")
+
+          if not path.exists():
+              raise SystemExit(
+                  "ERROR: android/app/build.gradle not found."
+              )
+
+          text = path.read_text()
+
+          compile_patterns = [
+              r'\bcompileSdkVersion\s+\d+',
+              r'\bcompileSdk\s*=\s*\d+',
+              r'\bcompileSdk\s+\d+'
+          ]
+
+          replaced_compile = False
+
+          for pattern in compile_patterns:
+              if re.search(pattern, text):
+                  text = re.sub(
+                      pattern,
+                      'compileSdk 36',
+                      text,
+                      count=1
+                  )
+                  replaced_compile = True
+                  break
+
+          if not replaced_compile:
+              android_match = re.search(
+                  r'\bandroid\s*\{',
+                  text
+              )
+
+              if not android_match:
+                  raise SystemExit(
+                      "ERROR: android block not found."
+                  )
+
+              position = android_match.end()
+
+              text = (
+                  text[:position]
+                  + "\n    compileSdk 36"
+                  + text[position:]
+              )
+
+          target_patterns = [
+              r'\btargetSdkVersion\s+\d+',
+              r'\btargetSdk\s*=\s*\d+',
+              r'\btargetSdk\s+\d+'
+          ]
+
+          replaced_target = False
+
+          for pattern in target_patterns:
+              if re.search(pattern, text):
+                  text = re.sub(
+                      pattern,
+                      'targetSdk 36',
+                      text,
+                      count=1
+                  )
+                  replaced_target = True
+                  break
+
+          if not replaced_target:
+              default_config_match = re.search(
+                  r'\bdefaultConfig\s*\{',
+                  text
+              )
+
+              if not default_config_match:
+                  raise SystemExit(
+                      "ERROR: defaultConfig block not found."
+                  )
+
+              position = default_config_match.end()
+
+              text = (
+                  text[:position]
+                  + "\n        targetSdk 36"
+                  + text[position:]
+              )
+
+          path.write_text(text)
+
+          print("================================")
+          print("ANDROID 16 CONFIGURED")
+          print("================================")
+          print("compileSdk: 36")
+          print("targetSdk: 36")
+          print("================================")
+          PY
+
+
+      # ============================================================
+      # 17. VERIFY ADMOB + ANDROID 16
+      # ============================================================
+
+      - name: Verify Android and AdMob configuration
+        env:
+          ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
+        run: |
+          set -euo pipefail
+
+          STRINGS_FILE="android/app/src/main/res/values/strings.xml"
+          MANIFEST_FILE="android/app/src/main/AndroidManifest.xml"
+          GRADLE_FILE="android/app/build.gradle"
+
+          test -f "$STRINGS_FILE"
+          test -f "$MANIFEST_FILE"
+          test -f "$GRADLE_FILE"
+
+          grep -Fq \
+            'name="admob_app_id"' \
+            "$STRINGS_FILE" || {
+              echo "ERROR: AdMob App ID resource missing."
+              exit 1
+          }
+
+          grep -Fq \
+            'com.google.android.gms.ads.APPLICATION_ID' \
+            "$MANIFEST_FILE" || {
+              echo "ERROR: AdMob APPLICATION_ID metadata missing."
+              exit 1
+          }
+
+          grep -Fq \
+            "$ADMOB_APP_ID" \
+            "$STRINGS_FILE" || {
+              echo "ERROR: AdMob App ID does not match secret."
+              exit 1
+          }
+
+          grep -Fq \
+            'com.google.android.gms.permission.AD_ID' \
+            "$MANIFEST_FILE" || {
+              echo "ERROR: AD_ID permission is missing."
+              exit 1
+          }
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          text = Path("android/app/build.gradle").read_text()
+
+          compile_matches = re.findall(
+              r'\bcompileSdk\s+(\d+)',
+              text
+          )
+
+          target_matches = re.findall(
+              r'\btargetSdk\s+(\d+)',
+              text
+          )
+
+          if not compile_matches:
+              raise SystemExit(
+                  "ERROR: compileSdk not found."
+              )
+
+          if compile_matches[0] != "36":
+              raise SystemExit(
+                  f"ERROR: compileSdk is "
+                  f"{compile_matches[0]}, expected 36."
+              )
+
+          if not target_matches:
+              raise SystemExit(
+                  "ERROR: targetSdk not found."
+              )
+
+          if target_matches[0] != "36":
+              raise SystemExit(
+                  f"ERROR: targetSdk is "
+                  f"{target_matches[0]}, expected 36."
+              )
+
+          print("================================")
+          print("ANDROID + ADMOB VERIFIED")
+          print("================================")
+          print("compileSdk: 36")
+          print("targetSdk: 36")
+          print("AD_ID: OK")
+          print("AdMob App ID: OK")
+          print("================================")
+          PY
+
+
+      # ============================================================
+      # 18. JAVA
+      # ============================================================
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+
+      # ============================================================
+      # 19. VALIDATE SIGNING SECRETS
+      # ============================================================
+
+      - name: Validate signing secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          test -n "$ANDROID_KEYSTORE_BASE64" || {
+            echo "ERROR: ANDROID_KEYSTORE_BASE64 is missing."
+            exit 1
+          }
+
+          test -n "$KEYSTORE_PASSWORD" || {
+            echo "ERROR: KEYSTORE_PASSWORD is missing."
+            exit 1
+          }
+
+          test -n "$KEY_ALIAS" || {
+            echo "ERROR: KEY_ALIAS is missing."
+            exit 1
+          }
+
+          test -n "$KEY_PASSWORD" || {
+            echo "ERROR: KEY_PASSWORD is missing."
+            exit 1
+          }
+
+          echo "All signing secrets are present."
+
+
+      # ============================================================
+      # 20. DECODE KEYSTORE
+      # ============================================================
+
+      - name: Decode upload keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" \
+            | base64 --decode \
+            > android/upload-keystore-original
+
+          test -s android/upload-keystore-original || {
+            echo "ERROR: Keystore decoding failed."
+            exit 1
+          }
+
+          chmod 600 android/upload-keystore-original
+
+          echo "Keystore decoded successfully."
+
+
+      # ============================================================
+      # 21. DETECT KEYSTORE TYPE
+      # ============================================================
+
+      - name: Detect keystore type
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if keytool \
+            -list \
+            -storetype PKCS12 \
+            -keystore android/upload-keystore-original \
+            -storepass "$KEYSTORE_PASSWORD" \
+            >/tmp/p12.txt 2>&1
+          then
+
+            echo "KEYSTORE_TYPE=PKCS12" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_KEY_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+
+            echo "Keystore type: PKCS12"
+
+          elif keytool \
+            -list \
+            -storetype JKS \
+            -keystore android/upload-keystore-original \
+            -storepass "$KEYSTORE_PASSWORD" \
+            >/tmp/jks.txt 2>&1
+          then
+
+            echo "KEYSTORE_TYPE=JKS" >> "$GITHUB_ENV"
+            echo "EFFECTIVE_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> "$GITHUB_ENV"
+
+            echo "Keystore type: JKS"
+
+          else
+
+            echo "ERROR: Unable to identify keystore."
+
+            cat /tmp/p12.txt || true
+            cat /tmp/jks.txt || true
+
+            exit 1
+          fi
+
+
+      # ============================================================
+      # 22. VERIFY KEYSTORE
+      # ============================================================
+
+      - name: Verify keystore
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+
+          keytool \
+            -list \
+            -v \
+            -storetype "$KEYSTORE_TYPE" \
+            -keystore android/upload-keystore-original \
+            -storepass "$KEYSTORE_PASSWORD" \
+            >/tmp/keystore-info.txt
+
+          if ! grep -Fq "Alias name: $KEY_ALIAS" /tmp/keystore-info.txt; then
+            echo "ERROR: Alias was not found."
+
+            echo "Available aliases:"
+            grep "Alias name:" /tmp/keystore-info.txt || true
+
+            exit 1
+          fi
+
+          echo "Keystore and alias verified."
+
+
+      # ============================================================
+      # 23. VERIFY PRIVATE KEY
+      # ============================================================
+
+      - name: Verify private key
