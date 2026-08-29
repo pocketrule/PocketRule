@@ -127,6 +127,7 @@ const POCKETRULE_ADMOB_ENABLED = String(import.meta.env.VITE_ADMOB_ENABLED ?? "t
 let pocketRuleAdMobInitialized = false;
 let pocketRuleAdMobConsentPromise = null;
 let pocketRuleAdMobListenersReady = false;
+let pocketRuleAdMobBannerVisible = false;
 
 async function setupPocketRuleAdMobListeners() {
   if (!isNativeApp() || pocketRuleAdMobListenersReady) return;
@@ -234,15 +235,17 @@ async function showPocketRuleBanner() {
       margin: 0,
       isTesting: POCKETRULE_ADMOB_TESTING,
     });
+    pocketRuleAdMobBannerVisible = true;
   } catch (error) {
     console.error("PocketRule banner failed to show:", error);
   }
 }
 
 async function hidePocketRuleBanner() {
-  if (!isNativeApp()) return;
+  if (!isNativeApp() || !pocketRuleAdMobBannerVisible) return;
   try {
     await AdMob.hideBanner();
+    pocketRuleAdMobBannerVisible = false;
   } catch (error) {
     console.warn("PocketRule banner hide failed:", error);
   }
@@ -424,7 +427,7 @@ function firePocketRuleReminder() {
   try { new Notification(POCKETRULE_REMINDER_TITLE, { body: POCKETRULE_REMINDER_BODY, tag: "pocketrule-reminder" }); } catch {}
 }
 
-const APP_VERSION = "1.18.2";
+const APP_VERSION = "1.18.3";
 const STORAGE_KEY = "pocketrule-state-v1";
 const ENCRYPTED_STORAGE_KEY = "pocketrule-state-v1-encrypted";
 const SECURITY_META_KEY = "pocketrule-security-meta-v1";
@@ -4011,7 +4014,7 @@ function BottomNav({ active, onNav }) {
         const Icon = it.icon;
         const isActive = active === it.id;
         return (
-          <button key={it.id} onClick={() => onNav(it.id)} style={{ flex: 1, background: "none", border: "none", padding: "6px 0 10px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "pointer", color: isActive ? GOLD : NAV_MUTED }}>
+          <button type="button" key={it.id} onClick={(event) => { event.preventDefault(); onNav(it.id); }} style={{ flex: 1, background: "none", border: "none", padding: "6px 0 10px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "pointer", color: isActive ? GOLD : NAV_MUTED }}>
             <div style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", color: isActive ? GOLD : NAV_MUTED }}>
               <Icon size={19} strokeWidth={isActive ? 2.5 : 2.0} />
               {isActive && <span style={{ position: "absolute", bottom: -2, width: 18, height: 3, borderRadius: 99, background: GOLD }} />}
@@ -4551,13 +4554,24 @@ function PocketRuleAppInner() {
   }, [loaded]);
 
   useEffect(() => {
-    if (!loaded || !isNativeApp()) return;
-    if (data.onboarded && screen === "resources") {
-      showPocketRuleBanner();
-    } else {
-      hidePocketRuleBanner();
+    if (!loaded || !isNativeApp() || !data.onboarded) return;
+
+    let cancelled = false;
+
+    if (screen === "resources") {
+      showPocketRuleBanner().catch((error) => {
+        if (!cancelled) {
+          console.error("PocketRule resources banner failed:", error);
+        }
+      });
     }
-    return () => { hidePocketRuleBanner(); };
+
+    return () => {
+      cancelled = true;
+      // Do not call AdMob.hideBanner() during ordinary screen navigation.
+      // Some Android AdMob/plugin versions can terminate the WebView when
+      // hideBanner() is called while no banner is currently attached.
+    };
   }, [loaded, data.onboarded, screen]);
 
   useEffect(() => {
