@@ -424,7 +424,7 @@ function firePocketRuleReminder() {
   try { new Notification(POCKETRULE_REMINDER_TITLE, { body: POCKETRULE_REMINDER_BODY, tag: "pocketrule-reminder" }); } catch {}
 }
 
-const APP_VERSION = "1.18.0";
+const APP_VERSION = "1.18.2";
 const STORAGE_KEY = "pocketrule-state-v1";
 const ENCRYPTED_STORAGE_KEY = "pocketrule-state-v1-encrypted";
 const SECURITY_META_KEY = "pocketrule-security-meta-v1";
@@ -5137,7 +5137,7 @@ function PocketRuleAppInner() {
   const themeVars = THEME_VARS[isDark ? "dark" : "light"];
 
   return (
-    <div style={{ minHeight: "100vh", background: "#050705", display: "flex", alignItems: "center", justifyContent: "center", padding: "14px 16px", boxSizing: "border-box", ...themeVars }}>
+    <div style={{ minHeight: "100dvh", width: "100%", background: PAPER, color: INK, boxSizing: "border-box", ...themeVars }}>
     {backupModal && <BackupPasswordSheet mode={backupModal.mode} isDark={isDark} error={backupModal.error} loading={backupModal.loading} onCancel={() => setBackupModal(null)} onConfirm={submitBackupModal} />}
         {backupModal?.pendingRestore && (
           <ConfirmSheet
@@ -5170,11 +5170,7 @@ function PocketRuleAppInner() {
           onEnable={enableReminderFromPrompt}
         />
       <style>{FONTS}</style>
-      <div style={{ width: "min(100%, 780px)", height: "min(780px, calc(100vh - 28px))", minHeight: 0, boxSizing: "border-box", background: PAPER, color: INK, colorScheme: isDark ? "dark" : "light", borderRadius: 34, border: "6px solid #000000", boxShadow: "0 28px 70px rgba(0,0,0,0.52)", overflow: "hidden", display: "flex", flexDirection: "column", position: "relative", ...themeVars }}>
-        <div style={{ height: 24, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <div style={{ width: 90, height: 18, background: "#000000", borderRadius: 10 }} />
-        </div>
-
+      <div style={{ width: "100%", height: "100dvh", minHeight: 0, boxSizing: "border-box", background: PAPER, color: INK, colorScheme: isDark ? "dark" : "light", overflow: "hidden", display: "flex", flexDirection: "column", position: "relative", ...themeVars }}>
         {loaded && data.onboarded && !isLocked && screen !== "firstRule" && (
           <div style={{ position: "relative", height: 38, padding: "3px 20px 9px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
