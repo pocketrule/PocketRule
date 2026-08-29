@@ -1,5 +1,117 @@
-html, body, #root { margin: 0; padding: 0; min-height: 100%; width: 100%; }
-html, body { background: #050705; }
-body { min-height: 100dvh; width: 100%; overflow-x: hidden; }
-#root { min-height: 100dvh; width: 100%; }
-* { box-sizing: border-box; }
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  width: 100%;
+}
+
+html, body {
+  background: #050705;
+}
+
+body {
+  min-height: 100dvh;
+  width: 100%;
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100dvh;
+  width: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* =========================================================
+   POCKETRULE READABILITY PASS
+   Typography only.
+   No navigation, calculations, state, AdMob, or interaction
+   behavior is changed.
+========================================================= */
+
+body {
+  font-size: 16px;
+}
+
+/* Normal written content */
+p {
+  font-size: 16px !important;
+  line-height: 1.45 !important;
+}
+
+/* Screen titles */
+h1 {
+  font-size: 28px !important;
+  line-height: 1.15 !important;
+}
+
+h2 {
+  font-size: 22px !important;
+  line-height: 1.2 !important;
+}
+
+h3 {
+  font-size: 19px !important;
+  line-height: 1.25 !important;
+}
+
+/* Form labels */
+label {
+  font-size: 14px !important;
+}
+
+/* Buttons */
+button {
+  font-size: 15px !important;
+}
+
+/* Form controls */
+input,
+textarea,
+select {
+  font-size: 16px !important;
+}
+
+/* Raise only the smaller inline text tiers used throughout cards. */
+[style*="font-size: 12px"],
+[style*="font-size: 12.5px"],
+[style*="font-size: 13px"],
+[style*="font-size: 13.5px"],
+[style*="font-size: 14px"],
+[style*="font-size: 14.5px"] {
+  font-size: 15px !important;
+  line-height: 1.35 !important;
+}
+
+[style*="font-size: 15px"],
+[style*="font-size: 15.5px"] {
+  font-size: 16px !important;
+  line-height: 1.4 !important;
+}
+
+/* Bottom navigation labels */
+nav button,
+nav button span {
+  font-size: 15px !important;
+}
+
+/* Preserve clear tabular alignment for financial figures. */
+.pr-money,
+.pr-number,
+.pr-amount-input,
+input[inputmode="numeric"] {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* Prevent horizontal overflow caused by larger readable text. */
+p,
+h1,
+h2,
+h3,
+label,
+button {
+  overflow-wrap: break-word;
+}
