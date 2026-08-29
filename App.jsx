@@ -127,6 +127,11 @@ const POCKETRULE_ADMOB_ENABLED = String(import.meta.env.VITE_ADMOB_ENABLED ?? "t
 let pocketRuleAdMobInitialized = false;
 let pocketRuleAdMobConsentPromise = null;
 let pocketRuleAdMobListenersReady = false;
+// Banner lifecycle is deliberately serialized. Android WebViews can crash if
+// hideBanner() races AdMob initialization/showBanner().
+let pocketRuleBannerRequest = 0;
+let pocketRuleBannerVisible = false;
+let pocketRuleBannerShowInFlight = null;
 
 async function setupPocketRuleAdMobListeners() {
   if (!isNativeApp() || pocketRuleAdMobListenersReady) return;
@@ -214,7 +219,10 @@ async function startPocketRuleAdMob() {
 async function showPocketRuleBanner() {
   if (!isNativeApp()) return;
 
+  const requestId = ++pocketRuleBannerRequest;
+
   const canRequestAds = await startPocketRuleAdMob();
+  if (requestId !== pocketRuleBannerRequest) return;
 
   if (!canRequestAds) {
     console.warn("PocketRule banner not shown because ads cannot be requested.");
@@ -227,24 +235,41 @@ async function showPocketRuleBanner() {
       isTesting: POCKETRULE_ADMOB_TESTING,
     });
 
-    await AdMob.showBanner({
+    pocketRuleBannerShowInFlight = AdMob.showBanner({
       adId: POCKETRULE_ADMOB_BANNER_ID,
       adSize: BannerAdSize.ADAPTIVE_BANNER,
       position: BannerAdPosition.BOTTOM_CENTER,
       margin: 0,
       isTesting: POCKETRULE_ADMOB_TESTING,
     });
+    await pocketRuleBannerShowInFlight;
+    if (requestId === pocketRuleBannerRequest) {
+      pocketRuleBannerVisible = true;
+    }
   } catch (error) {
     console.error("PocketRule banner failed to show:", error);
+  } finally {
+    pocketRuleBannerShowInFlight = null;
   }
 }
 
 async function hidePocketRuleBanner() {
   if (!isNativeApp()) return;
+
+  // Invalidate any pending show operation first. If the user navigates away
+  // while AdMob is still initializing, the pending show must not appear later.
+  ++pocketRuleBannerRequest;
+
   try {
+    if (pocketRuleBannerShowInFlight) {
+      await pocketRuleBannerShowInFlight.catch(() => {});
+    }
+    if (!pocketRuleBannerVisible) return;
     await AdMob.hideBanner();
   } catch (error) {
     console.warn("PocketRule banner hide failed:", error);
+  } finally {
+    pocketRuleBannerVisible = false;
   }
 }
 
@@ -424,7 +449,7 @@ function firePocketRuleReminder() {
   try { new Notification(POCKETRULE_REMINDER_TITLE, { body: POCKETRULE_REMINDER_BODY, tag: "pocketrule-reminder" }); } catch {}
 }
 
-const APP_VERSION = "1.18.4";
+const APP_VERSION = "1.18.5";
 const STORAGE_KEY = "pocketrule-state-v1";
 const ENCRYPTED_STORAGE_KEY = "pocketrule-state-v1-encrypted";
 const SECURITY_META_KEY = "pocketrule-security-meta-v1";
@@ -4545,18 +4570,12 @@ function PocketRuleAppInner() {
   useEffect(() => {
     if (!loaded || !isNativeApp()) return;
 
-    startPocketRuleAdMob().catch((error) => {
-      console.error("PocketRule AdMob startup failed:", error);
-    });
-  }, [loaded]);
-
-  useEffect(() => {
-    if (!loaded || !isNativeApp()) return;
     if (data.onboarded && screen === "resources") {
       showPocketRuleBanner();
     } else {
       hidePocketRuleBanner();
     }
+
     return () => { hidePocketRuleBanner(); };
   }, [loaded, data.onboarded, screen]);
 
