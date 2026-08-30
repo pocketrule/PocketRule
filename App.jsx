@@ -296,7 +296,7 @@ function firePocketRuleReminder() {
   try { new Notification(POCKETRULE_REMINDER_TITLE, { body: POCKETRULE_REMINDER_BODY, tag: "pocketrule-reminder" }); } catch {}
 }
 
-const APP_VERSION = "1.18.0";
+const APP_VERSION = "1.18.9";
 const STORAGE_KEY = "pocketrule-state-v1";
 const ENCRYPTED_STORAGE_KEY = "pocketrule-state-v1-encrypted";
 const SECURITY_META_KEY = "pocketrule-security-meta-v1";
@@ -1196,7 +1196,7 @@ function Switch({ on, onToggle }) {
 
 function ScreenHeader({ title, subtitle, onBack, right }) {
   return (
-    <div style={{ padding: "20px 20px 12px" }}>
+    <div style={{ padding: "16px 14px 10px" }}>
       <div style={{ position: "relative", minHeight: 42, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center" }}>
         {onBack && (
           <button
@@ -1632,7 +1632,7 @@ function PlanTracker({ plan, currency, onAddExpense, onEditExpense, onDeleteExpe
         </div>
 
         <div style={{ textAlign: "center", marginTop: 22 }}>
-          <p className="pr-money" style={{ fontFamily: "Roboto, sans-serif", fontWeight: 800, fontSize: 34, letterSpacing: "-0.045em", margin: 0, color: "#fff" }}>{formatMoney(totalRemaining, currency)}</p>
+          <p className="pr-money pr-hero-remaining" style={{ fontFamily: "Roboto, sans-serif", fontWeight: 800, fontSize: 34, letterSpacing: "-0.045em", margin: 0, color: "#fff" }}>{formatMoney(totalRemaining, currency)}</p>
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 800, margin: "4px 0 0", color: "rgba(255,255,255,0.86)", textTransform: "uppercase", letterSpacing: .8 }}>Remaining</p>
         </div>
 
@@ -2268,7 +2268,7 @@ function HomeScreen({ rules, activeRule, income, setIncome, currency, onSave, on
   }, [activePlan]);
 
   return (
-    <div style={{ padding: "4px 18px 28px" }}>
+    <div style={{ padding: "4px 14px 28px" }}>
       {!activePlan && (
         <section style={{ marginBottom: 16 }}>
           <div style={{
@@ -2606,7 +2606,7 @@ function RuleEditor({ initial, onCancel, onSave, firstRun }) {
   return (
     <div style={{ paddingBottom: 24 }}>
       {firstRun ? (
-        <div style={{ padding: "16px 20px 10px" }}>
+        <div style={{ padding: "14px 14px 10px" }}>
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
             <p style={{ fontFamily: "Roboto, sans-serif", fontSize: 12, letterSpacing: 1, color: GOLD, fontWeight: 600, margin: 0 }}>STEP 2 OF 2</p>
             <button
@@ -2625,12 +2625,12 @@ function RuleEditor({ initial, onCancel, onSave, firstRun }) {
         <ScreenHeader title={initial.id ? "Edit Rule" : "New Rule"} subtitle="Name it, split it, make it yours." onBack={onCancel} />
       )}
       {!firstRun && (
-        <div style={{ margin: "0 20px 12px", display: "flex", alignItems: "center", gap: 7, background: ACTIVE_TINT, border: `1px solid ${LINE}`, borderRadius: 10, padding: "8px 10px", color: MUTED }}>
+        <div style={{ margin: "0 14px 12px", display: "flex", alignItems: "center", gap: 7, background: ACTIVE_TINT, border: `1px solid ${LINE}`, borderRadius: 10, padding: "8px 10px", color: MUTED }}>
           <Pencil size={13} color={GOLD} strokeWidth={2.4} />
           <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, lineHeight: 1.3 }}>Tap any category name or percentage to edit it.</span>
         </div>
       )}
-      <div style={{ padding: "0 20px" }}>
+      <div style={{ padding: "0 14px" }}>
         <div style={{ background: PAPER_DIM, border: `1px solid ${LINE}`, borderRadius: 16, padding: 14, boxShadow: "none", marginBottom: 14 }}>
           <label style={{ ...labelStyle, marginBottom: 4 }}>Rule name</label>
           <input
@@ -2749,7 +2749,7 @@ function RulesScreen({ rules, activeRuleId, onNew, onOpen, onDuplicate, onDelete
   const [openRowKey, setOpenRowKey] = useState(null);
   return (
     <div style={{ paddingBottom: 24 }}>
-      <div style={{ padding: "20px 20px 14px", textAlign: "center" }}>
+      <div style={{ padding: "16px 14px 12px", textAlign: "center" }}>
         <h1 style={{ fontFamily: "Sora, sans-serif", fontWeight: 700, fontSize: 24, color: INK, margin: 0, textAlign: "center", width: "100%" }}>Rules</h1>
         <p style={{ fontFamily: "Inter, sans-serif", fontSize: 13.5, color: MUTED, margin: "4px auto 12px" }}>Pick one to use, or build a new Rule.</p>
         <button
@@ -2761,10 +2761,10 @@ function RulesScreen({ rules, activeRuleId, onNew, onOpen, onDuplicate, onDelete
           <Plus size={26} strokeWidth={2.5} />
         </button>
       </div>
-      <div style={{ height: 1, background: `repeating-linear-gradient(90deg, ${LINE} 0 6px, transparent 6px 12px)`, margin: "0 20px 16px" }} />
-      <p style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED, margin: "0 20px 12px" }}>Swipe a Rule left for quick actions.</p>
+      <div style={{ height: 1, background: `repeating-linear-gradient(90deg, ${LINE} 0 6px, transparent 6px 12px)`, margin: "0 14px 16px" }} />
+      <p style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED, margin: "0 14px 12px" }}>Swipe a Rule left for quick actions.</p>
 
-      <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ padding: "0 14px", display: "flex", flexDirection: "column", gap: 10 }}>
         {sortRulesForDisplay(rules, activeRuleId).map((r, i) => {
           const active = r.id === activeRuleId;
           return (
@@ -2812,7 +2812,7 @@ function RuleDetailScreen({ rule, isActive, canDelete, onBack, onUse, onEdit, on
     return (
       <div style={{ paddingBottom: 24 }}>
         <ScreenHeader title="Rule" onBack={onBack} />
-        <div style={{ padding: "0 20px" }}>
+        <div style={{ padding: "0 14px" }}>
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: 13, color: MUTED, textAlign: "center", marginTop: 20 }}>
             This Rule couldn't be found. It may have been deleted.
           </p>
@@ -2835,7 +2835,7 @@ function RuleDetailScreen({ rule, isActive, canDelete, onBack, onUse, onEdit, on
           </span>
         )}
       />
-      <div style={{ padding: "0 20px" }}>
+      <div style={{ padding: "0 14px" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
           {colored.map((c) => (
             <div key={c.id} style={{ background: PAPER_DIM, border: `1px solid ${LINE}`, borderRadius: 12, padding: "11px 14px" }}>
@@ -2900,7 +2900,7 @@ function HistoryScreen({ history, currency, onBack, onOpen, onDelete }) {
   return (
     <div style={{ paddingBottom: 24 }}>
       <ScreenHeader title="History" subtitle={`${history.length} saved plan${history.length === 1 ? "" : "s"}`} onBack={onBack} />
-      <div style={{ padding: "0 20px" }}>
+      <div style={{ padding: "0 14px" }}>
         {sorted.length === 0 && (
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: 13, color: MUTED, textAlign: "center", marginTop: 30 }}>
             Nothing saved yet. Create a plan on Home, then tap "Save."
@@ -3103,7 +3103,7 @@ function HistoryDetailScreen({ entry, currency, onBack }) {
     return (
       <div style={{ paddingBottom: 24 }}>
         <ScreenHeader title="Money Plan" onBack={onBack} />
-        <div style={{ padding: "0 20px" }}>
+        <div style={{ padding: "0 14px" }}>
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: 13, color: MUTED, textAlign: "center", marginTop: 20 }}>
             This entry couldn't be found. It may have been removed.
           </p>
@@ -3157,7 +3157,7 @@ function HistoryDetailScreen({ entry, currency, onBack }) {
         subtitle={new Date(entry.date).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}
         onBack={onBack}
       />
-      <div style={{ padding: "0 20px" }}>
+      <div style={{ padding: "0 14px" }}>
         <MoneyRuleCard ruleName={entry.ruleName} income={entry.income} currency={displayCurrency} categories={entry.categories} />
 
         <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -3302,7 +3302,7 @@ function SettingsScreen({ settings, onChange, onPinCreated, onLockNow, onReset, 
   return (
     <div style={{ paddingBottom: 24 }}>
       <ScreenHeader title="Settings" subtitle="Money display, appearance, and planning." />
-      <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ padding: "0 14px", display: "flex", flexDirection: "column", gap: 14 }}>
 
         <div>
           <label style={settingsLabelStyle}>Currency</label>
@@ -3646,7 +3646,7 @@ function ShareCardScreen({ income, categories, ruleName, currency, onClose }) {
   return (
     <div style={{ paddingBottom: 24 }}>
       <ScreenHeader title="Share My PocketRule" subtitle="A clean summary of your money plan." onBack={onClose} />
-      <div style={{ padding: "0 20px" }}>
+      <div style={{ padding: "0 14px" }}>
         <MoneyRuleCard ruleName={ruleName} income={incomeNum} currency={currency} categories={categories} />
 
         <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -3824,7 +3824,7 @@ function ResourcesScreen({ targetId = null }) {
   }, [targetId]);
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", padding: "18px 18px 30px", boxSizing: "border-box" }}>
+    <div style={{ height: "100%", overflowY: "auto", padding: "14px 14px 30px", boxSizing: "border-box" }}>
       <div style={{ textAlign: "center" }}>
         <div style={{ width: 46, height: 46, borderRadius: 14, background: ACTIVE_TINT, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 9px" }}>
           <BookOpen size={22} color={GOLD} strokeWidth={2.2} />
@@ -3877,21 +3877,21 @@ function BottomNav({ active, onNav }) {
     { id: "settings", label: "Settings", icon: SettingsIcon },
   ];
   return (
-    <div style={{ display: "flex", borderTop: `1px solid ${LINE}`, background: PAPER_DIM, paddingTop: 5, boxShadow: "0 -8px 20px -14px rgba(18,24,27,0.15)" }}>
+    <nav aria-label="Primary navigation" className="pr-bottom-nav" style={{ display: "flex", borderTop: `1px solid ${LINE}`, background: PAPER_DIM, padding: "5px 3px max(9px, env(safe-area-inset-bottom))", boxShadow: "0 -8px 20px -14px rgba(18,24,27,0.15)", flexShrink: 0 }}>
       {items.map((it) => {
         const Icon = it.icon;
         const isActive = active === it.id;
         return (
-          <button key={it.id} onClick={() => onNav(it.id)} style={{ flex: 1, background: "none", border: "none", padding: "6px 0 10px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "pointer", color: isActive ? GOLD : NAV_MUTED }}>
-            <div style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", color: isActive ? GOLD : NAV_MUTED }}>
-              <Icon size={19} strokeWidth={isActive ? 2.5 : 2.0} />
-              {isActive && <span style={{ position: "absolute", bottom: -2, width: 18, height: 3, borderRadius: 99, background: GOLD }} />}
+          <button key={it.id} onClick={() => onNav(it.id)} aria-current={isActive ? "page" : undefined} style={{ flex: "1 1 0", minWidth: 0, background: "none", border: "none", padding: "4px 1px 2px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, cursor: "pointer", color: isActive ? GOLD : NAV_MUTED, overflow: "hidden" }}>
+            <div style={{ width: "100%", height: 27, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", color: isActive ? GOLD : NAV_MUTED }}>
+              <Icon size={21} strokeWidth={isActive ? 2.5 : 2.0} />
+              {isActive && <span style={{ position: "absolute", bottom: -1, width: 18, height: 3, borderRadius: 99, background: GOLD }} />}
             </div>
-            <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: isActive ? 800 : 600 }}>{it.label}</span>
+            <span className="pr-nav-label" style={{ fontFamily: "Inter, sans-serif", fontSize: 13, lineHeight: 1.15, fontWeight: isActive ? 800 : 600, whiteSpace: "nowrap", textAlign: "center", maxWidth: "100%" }}>{it.label}</span>
           </button>
         );
       })}
-    </div>
+    </nav>
   );
 }
 
@@ -4014,7 +4014,7 @@ function PlansScreen({ plans, currency, onBack, onOpenActive, onOpenCompleted })
   return (
     <div style={{ paddingBottom: 24 }}>
       <ScreenHeader title="Plan" subtitle="Give every amount a job, then follow your plan." />
-      <div style={{ padding: "0 20px" }}>
+      <div style={{ padding: "0 14px" }}>
         {active ? (
           <button onClick={onOpenActive} style={{ width: "100%", textAlign: "left", border: "none", background: GREEN_CARD_GRADIENT, color: "#fff", borderRadius: 20, padding: 16, boxShadow: SHADOW_BTN, cursor: "pointer" }}>
             {(() => { const s = planSummary(active); return (
@@ -4233,7 +4233,7 @@ function CompletedPlanDetailScreen({ onDeletePlan, plan, currency, onBack, isDar
   return (
     <div style={{ paddingBottom: 24 }}>
       <ScreenHeader title="Completed Plan" subtitle="Review the full breakdown." onBack={onBack} />
-      <div style={{ padding: "0 20px" }}>
+      <div style={{ padding: "0 14px" }}>
         <div style={{ background: GREEN_CARD_GRADIENT, color: "#fff", borderRadius: 20, padding: 17, boxShadow: SHADOW_BTN }}>
           <div style={{ position: "relative", textAlign: "center", padding: "0 34px" }}><p style={{ fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 800, letterSpacing: .7, textTransform: "uppercase", margin: 0, opacity: .75 }}>Completed</p><h2 style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 19, margin: "4px 0 0" }}>{plan.name || "Money Plan"}</h2><p style={{ fontFamily: "Inter, sans-serif", fontSize: 12, margin: "4px 0 0", opacity: .72 }}>{new Date(plan.completedAt || plan.date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</p><Check size={22} strokeWidth={3} style={{ position: "absolute", right: 0, top: 0 }} /></div>
           <div style={{ marginTop: 18, fontFamily: "Roboto, sans-serif", fontSize: 26, fontWeight: 700, letterSpacing: "-0.035em" }}>{formatMoney(budget, displayCurrency)}</div>
@@ -5041,7 +5041,7 @@ function PocketRuleAppInner() {
           </div>
         )}
 
-        <div style={{ flex: 1, overflowY: "auto" }}>
+        <div className="pr-app-content" style={{ flex: 1, overflowY: "auto" }}>
           {!loaded ? (
             <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <LogoMark size={40} />
