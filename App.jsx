@@ -424,7 +424,7 @@ function firePocketRuleReminder() {
   try { new Notification(POCKETRULE_REMINDER_TITLE, { body: POCKETRULE_REMINDER_BODY, tag: "pocketrule-reminder" }); } catch {}
 }
 
-const APP_VERSION = "1.18.13";
+const APP_VERSION = "1.18.14";
 const STORAGE_KEY = "pocketrule-state-v1";
 const ENCRYPTED_STORAGE_KEY = "pocketrule-state-v1-encrypted";
 const SECURITY_META_KEY = "pocketrule-security-meta-v1";
@@ -936,7 +936,30 @@ function normalizeState(raw) {
         }))
     : [];
 
-  const reconciledPlans = plans.map((p) => {
+  // Permanently repair legacy plans whose categories accidentally shared an ID.
+  // The old ID generator used a timestamp plus only 1,000 possible random values,
+  // so two categories created together could collide and share spending. Keep the
+  // first occurrence's ID (and therefore its existing transactions) and assign a
+  // fresh unique ID to every later duplicate. New IDs use uid(), which is UUID-based.
+  const repairedPlans = plans.map((p) => {
+    const seen = new Set();
+    const categories = (p.categories || []).map((c) => {
+      let id = String(c.id || uid("pc"));
+      if (seen.has(id)) {
+        const original = id;
+        do { id = uid("pc"); } while (seen.has(id));
+        return { ...c, id, _repairedFromDuplicateId: original };
+      }
+      seen.add(id);
+      return { ...c, id };
+    });
+    return { ...p, categories };
+  }).map(({ categories, ...p }) => ({
+    ...p,
+    categories: categories.map(({ _repairedFromDuplicateId, ...c }) => c),
+  }));
+
+  const reconciledPlans = repairedPlans.map((p) => {
     const hasTransactions = Array.isArray(p.transactions) && p.transactions.length > 0;
     return reconcilePlanSpending(
       { ...p, hasTransactionLedger: p.hasTransactionLedger || hasTransactions },
@@ -1039,7 +1062,15 @@ function formatMoney(n, code) {
 }
 
 function uid(prefix) {
-  return prefix + "-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return `${prefix}-${crypto.randomUUID()}`;
+    }
+  } catch {}
+  const random = typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function"
+    ? Array.from(crypto.getRandomValues(new Uint32Array(2))).map((n) => n.toString(36)).join("")
+    : `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+  return `${prefix}-${Date.now().toString(36)}-${random}`;
 }
 
 function ruleSignature(rule, income) {
@@ -1360,21 +1391,21 @@ const stepperBtn = {
    PIN PAD (used for setup + unlock)
 --------------------------------------------------------- */
 function PinPad({ value, onDigit, onDelete, dark, shake }) {
-  // The PIN keypad intentionally stays light in both app themes for a stable,
-  // familiar authentication surface and maximum digit contrast.
   const keys = ["1","2","3","4","5","6","7","8","9","","0","del"];
-  const pinInk = "#12181B";
-  const pinLine = "#DDE3DE";
-  const pinBg = "#F5F7F3";
+  const pinInk = dark ? "#F4F7F2" : "#12181B";
+  const pinLine = dark ? "#314137" : "#DDE3DE";
+  const pinBg = dark ? "#17221C" : "#F5F7F3";
+  const pinCardBg = dark ? "#111A15" : "#FFFFFF";
+  const pinShadow = dark ? "0 8px 24px rgba(0,0,0,0.28)" : "0 8px 24px rgba(18,24,27,0.10)";
   return (
-    <div className={shake ? "pr-shake" : undefined} style={{ width: "100%", background: "#FFFFFF", border: `1px solid ${pinLine}`, borderRadius: 22, padding: "16px 12px 12px", boxShadow: "0 8px 24px rgba(18,24,27,0.10)" }}>
+    <div className={shake ? "pr-pin-pad pr-shake" : "pr-pin-pad"} style={{ width: "100%", background: pinCardBg, border: `1px solid ${pinLine}`, borderRadius: 22, padding: "16px 12px 12px", boxShadow: pinShadow }}>
       <div style={{ display: "flex", justifyContent: "center", gap: 12, marginBottom: 26 }}>
         {[0,1,2,3].map((i) => (
           <div key={i} style={{
             width: 13, height: 13, borderRadius: "50%",
-            border: `2px solid ${value.length > i ? pinInk : "rgba(18,24,27,0.22)"}`,
+            border: `2px solid ${value.length > i ? pinInk : (dark ? "rgba(244,247,242,0.28)" : "rgba(18,24,27,0.22)")}`,
             background: value.length > i ? pinInk : "transparent",
-            boxShadow: value.length > i ? "0 0 8px rgba(18,24,27,0.12)" : "none",
+            boxShadow: value.length > i ? (dark ? "0 0 8px rgba(244,247,242,0.16)" : "0 0 8px rgba(18,24,27,0.12)") : "none",
             transition: "all 150ms ease",
           }} />
         ))}
@@ -1391,7 +1422,7 @@ function PinPad({ value, onDigit, onDelete, dark, shake }) {
                 width: "100%", height: 66, borderRadius: 15,
                 border: `1px solid ${pinLine}`,
                 background: pinBg,
-                boxShadow: "0 2px 8px rgba(18,24,27,0.08)",
+                boxShadow: dark ? "0 2px 8px rgba(0,0,0,0.24)" : "0 2px 8px rgba(18,24,27,0.08)",
                 color: pinInk,
                 fontFamily: '"Roboto", sans-serif', fontSize: k === "del" ? 20 : 28,
                 fontWeight: 700, fontVariantNumeric: "tabular-nums", fontFeatureSettings: '"tnum" 1', letterSpacing: k === "0" ? "0.04em" : "0",
@@ -1434,8 +1465,8 @@ function LockScreen({ pin, onUnlock, onForgot, dark }) {
   }
 
   return (
-    <div style={{ minHeight: "100%", width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", padding: "28px 18px", background: dark ? "#0A100D" : "#F5F6F0" }}>
-      <div style={{ width: "100%", maxWidth: 560, boxSizing: "border-box", background: dark ? "#182019" : "#FFFFFF", border: `1px solid ${dark ? "#2B342E" : "#E7E9E1"}`, borderRadius: 30, padding: "34px 28px 28px", boxShadow: "0 24px 60px rgba(0,0,0,0.28)", textAlign: "center" }}>
+    <div className="pr-lock-screen" style={{ minHeight: "100%", height: "100%", width: "100%", boxSizing: "border-box", display: "flex", alignItems: "stretch", justifyContent: "center", padding: "max(18px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left))", background: dark ? "#0A100D" : "#F5F6F0" }}>
+      <div className="pr-lock-card" style={{ width: "100%", maxWidth: "none", minHeight: "100%", boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "center", background: dark ? "#182019" : "#FFFFFF", border: `1px solid ${dark ? "#2B342E" : "#E7E9E1"}`, borderRadius: 0, padding: "28px 18px", boxShadow: "none", textAlign: "center" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 10 }}>
           <LogoMark size={48} />
           <div style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 27, letterSpacing: "-0.8px", color: dark ? "#F1F4F0" : "#12181B", lineHeight: 1 }}>
@@ -1692,7 +1723,7 @@ function AddMoneySheet({ open, onClose, onConfirm, currency, plan }) {
             onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))}
             placeholder="0"
             aria-label="Additional amount"
-            style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", color: INK, fontFamily: "Roboto, sans-serif", fontWeight: 800, fontSize: 27 }}
+            className="pr-amount-input" style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", color: INK, fontFamily: "Roboto, sans-serif", fontWeight: 800, fontSize: 31 }}
           />
         </div>
 
@@ -1754,13 +1785,11 @@ function PlanTracker({ plan, currency, onAddExpense, onEditExpense, onDeleteExpe
             <p style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 21, color: "#fff", margin: "5px 0 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{plan.name || "Current plan"}</p>
             <p style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: "rgba(255,255,255,0.76)", margin: "4px 0 0" }}>{new Date(plan.date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</p>
           </div>
-          <div style={{ width: 42, height: 42, borderRadius: 13, background: "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <Calendar size={22} color="#fff" strokeWidth={2.1} />
-          </div>
+
         </div>
 
         <div style={{ textAlign: "center", marginTop: 22 }}>
-          <p className="pr-money" style={{ fontFamily: "Roboto, sans-serif", fontWeight: 800, fontSize: 34, letterSpacing: "-0.045em", margin: 0, color: "#fff" }}>{formatMoney(totalRemaining, currency)}</p>
+          <p className="pr-money pr-hero-remaining" style={{ fontFamily: "Roboto, sans-serif", fontWeight: 800, fontSize: 44, letterSpacing: "-0.045em", margin: 0, color: "#fff" }}>{formatMoney(totalRemaining, currency)}</p>
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 800, margin: "4px 0 0", color: "rgba(255,255,255,0.86)", textTransform: "uppercase", letterSpacing: .8 }}>Remaining</p>
         </div>
 
@@ -4006,17 +4035,17 @@ function BottomNav({ active, onNav }) {
     { id: "settings", label: "Settings", icon: SettingsIcon },
   ];
   return (
-    <div style={{ display: "flex", borderTop: `1px solid ${LINE}`, background: PAPER_DIM, paddingTop: 5, boxShadow: "0 -8px 20px -14px rgba(18,24,27,0.15)" }}>
+    <div className="pr-bottom-nav" style={{ display: "flex", borderTop: `1px solid ${LINE}`, background: PAPER_DIM, paddingTop: 4, paddingBottom: "max(3px, env(safe-area-inset-bottom))", boxShadow: "0 -8px 20px -14px rgba(18,24,27,0.15)" }}>
       {items.map((it) => {
         const Icon = it.icon;
         const isActive = active === it.id;
         return (
-          <button key={it.id} onClick={() => onNav(it.id)} style={{ flex: 1, background: "none", border: "none", padding: "6px 0 10px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "pointer", color: isActive ? GOLD : NAV_MUTED }}>
+          <button key={it.id} onClick={() => onNav(it.id)} style={{ flex: 1, background: "none", border: "none", padding: "4px 0 5px", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, cursor: "pointer", color: isActive ? GOLD : NAV_MUTED }}>
             <div style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", color: isActive ? GOLD : NAV_MUTED }}>
               <Icon size={19} strokeWidth={isActive ? 2.5 : 2.0} />
               {isActive && <span style={{ position: "absolute", bottom: -2, width: 18, height: 3, borderRadius: 99, background: GOLD }} />}
             </div>
-            <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: isActive ? 800 : 600 }}>{it.label}</span>
+            <span className="pr-nav-label" style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, lineHeight: 1.15, fontWeight: isActive ? 800 : 600 }}>{it.label}</span>
           </button>
         );
       })}
@@ -5137,7 +5166,7 @@ function PocketRuleAppInner() {
   const themeVars = THEME_VARS[isDark ? "dark" : "light"];
 
   return (
-    <div style={{ minHeight: "100vh", background: "#050705", display: "flex", alignItems: "center", justifyContent: "center", padding: "14px 16px", boxSizing: "border-box", ...themeVars }}>
+    <div className="pr-app-shell" style={{ minHeight: "100dvh", background: "#050705", display: "flex", alignItems: "center", justifyContent: "center", padding: "max(0px, env(safe-area-inset-top)) max(0px, env(safe-area-inset-right)) max(0px, env(safe-area-inset-bottom)) max(0px, env(safe-area-inset-left))", boxSizing: "border-box", ...themeVars }}>
     {backupModal && <BackupPasswordSheet mode={backupModal.mode} isDark={isDark} error={backupModal.error} loading={backupModal.loading} onCancel={() => setBackupModal(null)} onConfirm={submitBackupModal} />}
         {backupModal?.pendingRestore && (
           <ConfirmSheet
@@ -5170,7 +5199,7 @@ function PocketRuleAppInner() {
           onEnable={enableReminderFromPrompt}
         />
       <style>{FONTS}</style>
-      <div style={{ width: "min(100%, 780px)", height: "min(780px, calc(100vh - 28px))", minHeight: 0, boxSizing: "border-box", background: PAPER, color: INK, colorScheme: isDark ? "dark" : "light", borderRadius: 34, border: "6px solid #000000", boxShadow: "0 28px 70px rgba(0,0,0,0.52)", overflow: "hidden", display: "flex", flexDirection: "column", position: "relative", ...themeVars }}>
+      <div className="pr-app-frame" style={{ width: "min(100%, 780px)", height: "min(780px, calc(100dvh - 28px))", minHeight: 0, boxSizing: "border-box", background: PAPER, color: INK, colorScheme: isDark ? "dark" : "light", borderRadius: 34, border: "6px solid #000000", boxShadow: "0 28px 70px rgba(0,0,0,0.52)", overflow: "hidden", display: "flex", flexDirection: "column", position: "relative", ...themeVars }}>
         {loaded && data.onboarded && !isLocked && screen !== "firstRule" && (
           <div style={{ position: "relative", height: 38, padding: "3px 20px 9px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>

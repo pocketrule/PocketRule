@@ -92,7 +92,7 @@ select {
 
 /* The main Home/Plan remaining figure must keep its prominent size. */
 .pr-hero-remaining {
-  font-size: 34px !important;
+  font-size: 44px !important;
   line-height: 1.05 !important;
 }
 
@@ -176,6 +176,8 @@ button {
 
 .pr-lock-screen {
   overflow-y: auto;
+  width: 100%;
+  min-height: 100%;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -210,7 +212,37 @@ button {
 }
 
 
-/* Device notch/safe-area surface follows the active PocketRule theme. */
-.pr-device-top {
-  background: var(--pr-paper) !important;
+
+/* =========================================================
+   POCKETRULE v1.18.14 — PERMANENT UI SAFETY RULES
+========================================================= */
+.pr-app-shell {
+  width: 100%;
+  min-height: 100dvh;
 }
+
+.pr-bottom-nav {
+  padding-bottom: max(3px, env(safe-area-inset-bottom));
+}
+
+.pr-bottom-nav button {
+  padding-bottom: 5px !important;
+}
+
+.pr-pin-pad {
+  width: 100%;
+}
+
+.pr-lock-screen {
+  width: 100%;
+  min-height: 100%;
+  height: 100%;
+}
+
+.pr-lock-card {
+  width: 100%;
+  min-height: 100%;
+}
+
+/* The app must never draw a fake camera/notch pill. Android owns the
+   actual display cutout; only safe-area insets are used here. */
