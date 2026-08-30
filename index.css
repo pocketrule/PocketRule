@@ -112,7 +112,7 @@ force 15–16px labels into five narrow columns. */
 }
 
 .pr-bottom-nav button {
-  font-size: 13px !important;
+  font-size: 11.5px !important;
   line-height: 1.15 !important;
   min-width: 0 !important;
 }
@@ -120,7 +120,7 @@ force 15–16px labels into five narrow columns. */
 .pr-bottom-nav .pr-nav-label {
   display: block;
   width: 100%;
-  font-size: 13px !important;
+  font-size: 11.5px !important;
   line-height: 1.15 !important;
   white-space: nowrap;
   overflow: hidden;
@@ -207,4 +207,10 @@ button {
   .pr-pin-pad button {
     height: 62px !important;
   }
+}
+
+
+/* Device notch/safe-area surface follows the active PocketRule theme. */
+.pr-device-top {
+  background: var(--pr-paper) !important;
 }

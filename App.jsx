@@ -296,7 +296,7 @@ function firePocketRuleReminder() {
   try { new Notification(POCKETRULE_REMINDER_TITLE, { body: POCKETRULE_REMINDER_BODY, tag: "pocketrule-reminder" }); } catch {}
 }
 
-const APP_VERSION = "1.18.10";
+const APP_VERSION = "1.18.12";
 const STORAGE_KEY = "pocketrule-state-v1";
 const ENCRYPTED_STORAGE_KEY = "pocketrule-state-v1-encrypted";
 const SECURITY_META_KEY = "pocketrule-security-meta-v1";
@@ -720,6 +720,50 @@ function normalizeSettings(rawSettings, baseSettings) {
   };
 }
 
+function repairPlanCategoryIds(plan) {
+  if (!plan || !Array.isArray(plan.categories)) return plan;
+
+  const seen = new Set();
+  const duplicateOriginalIds = new Set();
+  const firstIdByOriginal = new Map();
+
+  const categories = plan.categories.map((c, index) => {
+    const originalId = String(c.id || "");
+    let id = originalId || uid(`pc${index}`);
+
+    if (!seen.has(id)) {
+      seen.add(id);
+      firstIdByOriginal.set(originalId, id);
+      return { ...c, id };
+    }
+
+    // A legacy build could generate the same category ID twice. Keep the
+    // first category as the canonical owner of that ID and give this
+    // category a new ID so its spending can no longer mirror the first one.
+    duplicateOriginalIds.add(originalId);
+    do { id = uid(`pc${index}`); } while (seen.has(id));
+    seen.add(id);
+    return { ...c, id };
+  });
+
+  if (duplicateOriginalIds.size === 0) return { ...plan, categories };
+
+  // A transaction containing only a duplicated legacy category ID cannot
+  // tell us which duplicate was intended. Preserve it with the first
+  // category (the original owner) rather than displaying the same spending
+  // against multiple categories. New transactions are fully isolated by the
+  // unique IDs above.
+  const transactions = Array.isArray(plan.transactions)
+    ? plan.transactions.map((tx) => {
+        const categoryId = String(tx?.categoryId || "");
+        if (!duplicateOriginalIds.has(categoryId)) return tx;
+        return { ...tx, categoryId: firstIdByOriginal.get(categoryId) || categoryId };
+      })
+    : [];
+
+  return { ...plan, categories, transactions };
+}
+
 function normalizeState(raw) {
   const base = defaultState();
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return base;
@@ -808,7 +852,9 @@ function normalizeState(raw) {
         }))
     : [];
 
-  const reconciledPlans = plans.map((p) => {
+  const repairedPlans = plans.map((p) => repairPlanCategoryIds(p));
+
+  const reconciledPlans = repairedPlans.map((p) => {
     const hasTransactions = Array.isArray(p.transactions) && p.transactions.length > 0;
     return reconcilePlanSpending(
       { ...p, hasTransactionLedger: p.hasTransactionLedger || hasTransactions },
@@ -910,8 +956,13 @@ function formatMoney(n, code) {
   return (symbol ? symbol : "") + v.toLocaleString("en-US");
 }
 
+let __uidCounter = 0;
 function uid(prefix) {
-  return prefix + "-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
+  try {
+    if (globalThis.crypto?.randomUUID) return `${prefix}-${globalThis.crypto.randomUUID()}`;
+  } catch {}
+  __uidCounter = (__uidCounter + 1) % 1000000;
+  return `${prefix}-${Date.now()}-${__uidCounter}-${Math.floor(Math.random() * 1000000)}`;
 }
 
 function ruleSignature(rule, income) {
@@ -1232,21 +1283,24 @@ const stepperBtn = {
    PIN PAD (used for setup + unlock)
 --------------------------------------------------------- */
 function PinPad({ value, onDigit, onDelete, dark, shake }) {
-  // The PIN keypad intentionally stays light in both app themes for a stable,
-  // familiar authentication surface and maximum digit contrast.
+  // The PIN keypad follows PocketRule's active theme so authentication feels
+  // like part of the app rather than a separate light surface in Dark Mode.
   const keys = ["1","2","3","4","5","6","7","8","9","","0","del"];
-  const pinInk = "#12181B";
-  const pinLine = "#DDE3DE";
-  const pinBg = "#F5F7F3";
+  const pinInk = dark ? "#F5F7F5" : "#12181B";
+  const pinLine = dark ? "#314238" : "#DDE3DE";
+  const pinBg = dark ? "#17221C" : "#F5F7F3";
+  const pinPadBg = dark ? "#0F1913" : "#FFFFFF";
+  const pinShadow = dark ? "0 8px 24px rgba(0,0,0,0.24)" : "0 8px 24px rgba(18,24,27,0.10)";
+  const emptyDot = dark ? "rgba(245,247,245,0.30)" : "rgba(18,24,27,0.22)";
   return (
-    <div className={shake ? "pr-pin-pad pr-shake" : "pr-pin-pad"} style={{ width: "100%", background: "#FFFFFF", border: `1px solid ${pinLine}`, borderRadius: 22, padding: "16px 12px 12px", boxShadow: "0 8px 24px rgba(18,24,27,0.10)" }}>
+    <div className={shake ? "pr-pin-pad pr-shake" : "pr-pin-pad"} style={{ width: "100%", background: pinPadBg, border: `1px solid ${pinLine}`, borderRadius: 22, padding: "16px 12px 12px", boxShadow: pinShadow }}>
       <div style={{ display: "flex", justifyContent: "center", gap: 12, marginBottom: 26 }}>
         {[0,1,2,3].map((i) => (
           <div key={i} style={{
             width: 13, height: 13, borderRadius: "50%",
-            border: `2px solid ${value.length > i ? pinInk : "rgba(18,24,27,0.22)"}`,
+            border: `2px solid ${value.length > i ? pinInk : emptyDot}`,
             background: value.length > i ? pinInk : "transparent",
-            boxShadow: value.length > i ? "0 0 8px rgba(18,24,27,0.12)" : "none",
+            boxShadow: value.length > i ? (dark ? "0 0 8px rgba(245,247,245,0.12)" : "0 0 8px rgba(18,24,27,0.12)") : "none",
             transition: "all 150ms ease",
           }} />
         ))}
@@ -1625,9 +1679,6 @@ function PlanTracker({ plan, currency, onAddExpense, onEditExpense, onDeleteExpe
             <p style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: "rgba(255,255,255,0.78)", margin: 0, textTransform: "uppercase", letterSpacing: .9, fontWeight: 800 }}>Active plan</p>
             <p style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 21, color: "#fff", margin: "5px 0 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{plan.name || "Current plan"}</p>
             <p style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: "rgba(255,255,255,0.76)", margin: "4px 0 0" }}>{new Date(plan.date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</p>
-          </div>
-          <div style={{ width: 42, height: 42, borderRadius: 13, background: "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <Calendar size={22} color="#fff" strokeWidth={2.1} />
           </div>
         </div>
 
@@ -3887,7 +3938,7 @@ function BottomNav({ active, onNav }) {
               <Icon size={21} strokeWidth={isActive ? 2.5 : 2.0} />
               {isActive && <span style={{ position: "absolute", bottom: -1, width: 18, height: 3, borderRadius: 99, background: GOLD }} />}
             </div>
-            <span className="pr-nav-label" style={{ fontFamily: "Inter, sans-serif", fontSize: 13, lineHeight: 1.15, fontWeight: isActive ? 800 : 600, whiteSpace: "nowrap", textAlign: "center", maxWidth: "100%" }}>{it.label}</span>
+            <span className="pr-nav-label" style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, lineHeight: 1.15, fontWeight: isActive ? 800 : 600, whiteSpace: "nowrap", textAlign: "center", maxWidth: "100%" }}>{it.label}</span>
           </button>
         );
       })}
@@ -4557,9 +4608,10 @@ function PocketRuleAppInner() {
         if (!name) return d;
         plans = plans.map((p) => p.status === "active" ? { ...p, status: "completed", completedAt: Date.now() } : p);
 
+        const planId = uid("plan");
         const plan = {
-          id: uid("plan"), date: Date.now(), name, ruleId: rule.id, ruleName: rule.name, income: incomeNum, currency: d.settings.currency,
-          categories: allocated.map((c) => ({ id: uid("pc"), name: c.name, pct: c.pct, budget: c.amount, spent: 0 })),
+          id: planId, date: Date.now(), name, ruleId: rule.id, ruleName: rule.name, income: incomeNum, currency: d.settings.currency,
+          categories: allocated.map((c, index) => ({ id: `${planId}-cat-${index}`, name: c.name, pct: c.pct, budget: c.amount, spent: 0 })),
           transactions: [], hasTransactionLedger: true, status: "active",
         };
         plans = [...plans, plan];
@@ -5025,7 +5077,7 @@ function PocketRuleAppInner() {
         />
       <style>{FONTS}</style>
       <div style={{ width: "min(100%, 780px)", height: "min(780px, calc(100vh - 28px))", minHeight: 0, boxSizing: "border-box", background: PAPER, color: INK, colorScheme: isDark ? "dark" : "light", borderRadius: 34, border: "6px solid #000000", boxShadow: "0 28px 70px rgba(0,0,0,0.52)", overflow: "hidden", display: "flex", flexDirection: "column", position: "relative", ...themeVars }}>
-        <div style={{ height: 24, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <div className="pr-device-top" style={{ height: "max(24px, env(safe-area-inset-top))", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: PAPER }}>
           <div style={{ width: 90, height: 18, background: "#000000", borderRadius: 10 }} />
         </div>
 
