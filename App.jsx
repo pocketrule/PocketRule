@@ -1,6 +1,7 @@
 import React, { Component, useState, useEffect, useRef } from "react";
 import { Capacitor } from "@capacitor/core";
 import { LocalNotifications } from "@capacitor/local-notifications";
+import { AdMob, AdmobConsentStatus, BannerAdSize, BannerAdPosition, BannerAdPluginEvents } from "@capacitor-community/admob";
 import {
   ArrowRight, ArrowLeft, Check, Eye, EyeOff, Share2, BookmarkPlus, BookmarkCheck, Minus,
   Globe2,
@@ -119,6 +120,133 @@ const CURRENCIES = [
 --------------------------------------------------------- */
 const POCKETRULE_REMINDER_ID = 481516;
 const POCKETRULE_NOTIFICATION_CHANNEL = "pocketrule-reminders-v2";
+const POCKETRULE_ADMOB_BANNER_ID = import.meta.env.VITE_ADMOB_BANNER_ID || "ca-app-pub-3940256099942544/6300978111";
+const POCKETRULE_ADMOB_TESTING = String(import.meta.env.VITE_ADMOB_TESTING ?? "true").toLowerCase() !== "false";
+const POCKETRULE_ADMOB_ENABLED = String(import.meta.env.VITE_ADMOB_ENABLED ?? "true").toLowerCase() !== "false";
+
+let pocketRuleAdMobInitialized = false;
+let pocketRuleAdMobConsentPromise = null;
+let pocketRuleAdMobListenersReady = false;
+
+async function setupPocketRuleAdMobListeners() {
+  if (!isNativeApp() || pocketRuleAdMobListenersReady) return;
+
+  pocketRuleAdMobListenersReady = true;
+
+  try {
+    await AdMob.addListener(BannerAdPluginEvents.Loaded, (info) => {
+      console.log("PocketRule AdMob banner loaded:", info);
+    });
+
+    await AdMob.addListener(BannerAdPluginEvents.FailedToLoad, (error) => {
+      console.error("PocketRule AdMob banner failed to load:", error);
+    });
+
+    await AdMob.addListener(BannerAdPluginEvents.Opened, () => {
+      console.log("PocketRule AdMob banner opened.");
+    });
+
+    await AdMob.addListener(BannerAdPluginEvents.Closed, () => {
+      console.log("PocketRule AdMob banner closed.");
+    });
+
+    await AdMob.addListener(BannerAdPluginEvents.SizeChanged, (size) => {
+      console.log("PocketRule AdMob banner size changed:", size);
+    });
+  } catch (error) {
+    console.error("PocketRule AdMob listener setup failed:", error);
+  }
+}
+
+async function startPocketRuleAdMob() {
+  if (!isNativeApp() || !POCKETRULE_ADMOB_ENABLED) {
+    console.log("PocketRule AdMob skipped:", {
+      native: isNativeApp(),
+      enabled: POCKETRULE_ADMOB_ENABLED,
+    });
+    return false;
+  }
+
+  try {
+    if (!pocketRuleAdMobInitialized) {
+      await AdMob.initialize({
+        initializeForTesting: POCKETRULE_ADMOB_TESTING,
+      });
+      pocketRuleAdMobInitialized = true;
+      console.log("PocketRule AdMob initialized.");
+    }
+
+    await setupPocketRuleAdMobListeners();
+
+    if (!pocketRuleAdMobConsentPromise) {
+      pocketRuleAdMobConsentPromise = (async () => {
+        let consentInfo = await AdMob.requestConsentInfo();
+
+        console.log("PocketRule AdMob consent info:", consentInfo);
+
+        if (
+          !consentInfo.canRequestAds &&
+          consentInfo.isConsentFormAvailable
+        ) {
+          consentInfo = await AdMob.showConsentForm();
+          console.log("PocketRule AdMob consent result:", consentInfo);
+        }
+
+        if (!consentInfo.canRequestAds) {
+          console.warn(
+            "PocketRule AdMob cannot request ads yet. " +
+            "Consent/status does not currently allow an ad request."
+          );
+        }
+
+        return Boolean(consentInfo.canRequestAds);
+      })();
+    }
+
+    return await pocketRuleAdMobConsentPromise;
+  } catch (error) {
+    console.error("PocketRule AdMob initialization/consent failed:", error);
+    pocketRuleAdMobConsentPromise = null;
+    return false;
+  }
+}
+
+async function showPocketRuleBanner() {
+  if (!isNativeApp()) return;
+
+  const canRequestAds = await startPocketRuleAdMob();
+
+  if (!canRequestAds) {
+    console.warn("PocketRule banner not shown because ads cannot be requested.");
+    return;
+  }
+
+  try {
+    console.log("PocketRule showing AdMob banner:", {
+      adId: POCKETRULE_ADMOB_BANNER_ID,
+      isTesting: POCKETRULE_ADMOB_TESTING,
+    });
+
+    await AdMob.showBanner({
+      adId: POCKETRULE_ADMOB_BANNER_ID,
+      adSize: BannerAdSize.ADAPTIVE_BANNER,
+      position: BannerAdPosition.BOTTOM_CENTER,
+      margin: 0,
+      isTesting: POCKETRULE_ADMOB_TESTING,
+    });
+  } catch (error) {
+    console.error("PocketRule banner failed to show:", error);
+  }
+}
+
+async function hidePocketRuleBanner() {
+  if (!isNativeApp()) return;
+  try {
+    await AdMob.hideBanner();
+  } catch (error) {
+    console.warn("PocketRule banner hide failed:", error);
+  }
+}
 
 const POCKETRULE_REMINDER_TITLE = "Money Reminder";
 const POCKETRULE_REMINDER_BODY = "You’re expecting money today. Open PocketRule and decide where it goes.";
@@ -296,7 +424,7 @@ function firePocketRuleReminder() {
   try { new Notification(POCKETRULE_REMINDER_TITLE, { body: POCKETRULE_REMINDER_BODY, tag: "pocketrule-reminder" }); } catch {}
 }
 
-const APP_VERSION = "1.18.12";
+const APP_VERSION = "1.18.13";
 const STORAGE_KEY = "pocketrule-state-v1";
 const ENCRYPTED_STORAGE_KEY = "pocketrule-state-v1-encrypted";
 const SECURITY_META_KEY = "pocketrule-security-meta-v1";
@@ -720,50 +848,6 @@ function normalizeSettings(rawSettings, baseSettings) {
   };
 }
 
-function repairPlanCategoryIds(plan) {
-  if (!plan || !Array.isArray(plan.categories)) return plan;
-
-  const seen = new Set();
-  const duplicateOriginalIds = new Set();
-  const firstIdByOriginal = new Map();
-
-  const categories = plan.categories.map((c, index) => {
-    const originalId = String(c.id || "");
-    let id = originalId || uid(`pc${index}`);
-
-    if (!seen.has(id)) {
-      seen.add(id);
-      firstIdByOriginal.set(originalId, id);
-      return { ...c, id };
-    }
-
-    // A legacy build could generate the same category ID twice. Keep the
-    // first category as the canonical owner of that ID and give this
-    // category a new ID so its spending can no longer mirror the first one.
-    duplicateOriginalIds.add(originalId);
-    do { id = uid(`pc${index}`); } while (seen.has(id));
-    seen.add(id);
-    return { ...c, id };
-  });
-
-  if (duplicateOriginalIds.size === 0) return { ...plan, categories };
-
-  // A transaction containing only a duplicated legacy category ID cannot
-  // tell us which duplicate was intended. Preserve it with the first
-  // category (the original owner) rather than displaying the same spending
-  // against multiple categories. New transactions are fully isolated by the
-  // unique IDs above.
-  const transactions = Array.isArray(plan.transactions)
-    ? plan.transactions.map((tx) => {
-        const categoryId = String(tx?.categoryId || "");
-        if (!duplicateOriginalIds.has(categoryId)) return tx;
-        return { ...tx, categoryId: firstIdByOriginal.get(categoryId) || categoryId };
-      })
-    : [];
-
-  return { ...plan, categories, transactions };
-}
-
 function normalizeState(raw) {
   const base = defaultState();
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return base;
@@ -852,9 +936,7 @@ function normalizeState(raw) {
         }))
     : [];
 
-  const repairedPlans = plans.map((p) => repairPlanCategoryIds(p));
-
-  const reconciledPlans = repairedPlans.map((p) => {
+  const reconciledPlans = plans.map((p) => {
     const hasTransactions = Array.isArray(p.transactions) && p.transactions.length > 0;
     return reconcilePlanSpending(
       { ...p, hasTransactionLedger: p.hasTransactionLedger || hasTransactions },
@@ -956,13 +1038,8 @@ function formatMoney(n, code) {
   return (symbol ? symbol : "") + v.toLocaleString("en-US");
 }
 
-let __uidCounter = 0;
 function uid(prefix) {
-  try {
-    if (globalThis.crypto?.randomUUID) return `${prefix}-${globalThis.crypto.randomUUID()}`;
-  } catch {}
-  __uidCounter = (__uidCounter + 1) % 1000000;
-  return `${prefix}-${Date.now()}-${__uidCounter}-${Math.floor(Math.random() * 1000000)}`;
+  return prefix + "-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
 }
 
 function ruleSignature(rule, income) {
@@ -1247,7 +1324,7 @@ function Switch({ on, onToggle }) {
 
 function ScreenHeader({ title, subtitle, onBack, right }) {
   return (
-    <div style={{ padding: "16px 14px 10px" }}>
+    <div style={{ padding: "20px 20px 12px" }}>
       <div style={{ position: "relative", minHeight: 42, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center" }}>
         {onBack && (
           <button
@@ -1283,24 +1360,21 @@ const stepperBtn = {
    PIN PAD (used for setup + unlock)
 --------------------------------------------------------- */
 function PinPad({ value, onDigit, onDelete, dark, shake }) {
-  // The PIN keypad follows PocketRule's active theme so authentication feels
-  // like part of the app rather than a separate light surface in Dark Mode.
+  // The PIN keypad intentionally stays light in both app themes for a stable,
+  // familiar authentication surface and maximum digit contrast.
   const keys = ["1","2","3","4","5","6","7","8","9","","0","del"];
-  const pinInk = dark ? "#F5F7F5" : "#12181B";
-  const pinLine = dark ? "#314238" : "#DDE3DE";
-  const pinBg = dark ? "#17221C" : "#F5F7F3";
-  const pinPadBg = dark ? "#0F1913" : "#FFFFFF";
-  const pinShadow = dark ? "0 8px 24px rgba(0,0,0,0.24)" : "0 8px 24px rgba(18,24,27,0.10)";
-  const emptyDot = dark ? "rgba(245,247,245,0.30)" : "rgba(18,24,27,0.22)";
+  const pinInk = "#12181B";
+  const pinLine = "#DDE3DE";
+  const pinBg = "#F5F7F3";
   return (
-    <div className={shake ? "pr-pin-pad pr-shake" : "pr-pin-pad"} style={{ width: "100%", background: pinPadBg, border: `1px solid ${pinLine}`, borderRadius: 22, padding: "16px 12px 12px", boxShadow: pinShadow }}>
+    <div className={shake ? "pr-shake" : undefined} style={{ width: "100%", background: "#FFFFFF", border: `1px solid ${pinLine}`, borderRadius: 22, padding: "16px 12px 12px", boxShadow: "0 8px 24px rgba(18,24,27,0.10)" }}>
       <div style={{ display: "flex", justifyContent: "center", gap: 12, marginBottom: 26 }}>
         {[0,1,2,3].map((i) => (
           <div key={i} style={{
             width: 13, height: 13, borderRadius: "50%",
-            border: `2px solid ${value.length > i ? pinInk : emptyDot}`,
+            border: `2px solid ${value.length > i ? pinInk : "rgba(18,24,27,0.22)"}`,
             background: value.length > i ? pinInk : "transparent",
-            boxShadow: value.length > i ? (dark ? "0 0 8px rgba(245,247,245,0.12)" : "0 0 8px rgba(18,24,27,0.12)") : "none",
+            boxShadow: value.length > i ? "0 0 8px rgba(18,24,27,0.12)" : "none",
             transition: "all 150ms ease",
           }} />
         ))}
@@ -1360,22 +1434,22 @@ function LockScreen({ pin, onUnlock, onForgot, dark }) {
   }
 
   return (
-    <div className="pr-lock-screen" style={{ minHeight: "100%", width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px 12px", background: dark ? "#0A100D" : "#F5F6F0" }}>
-      <div className="pr-lock-card" style={{ width: "100%", maxWidth: 560, boxSizing: "border-box", background: dark ? "#182019" : "#FFFFFF", border: `1px solid ${dark ? "#2B342E" : "#E7E9E1"}`, borderRadius: 26, padding: "24px 20px 20px", boxShadow: "0 24px 60px rgba(0,0,0,0.28)", textAlign: "center" }}>
+    <div style={{ minHeight: "100%", width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", padding: "28px 18px", background: dark ? "#0A100D" : "#F5F6F0" }}>
+      <div style={{ width: "100%", maxWidth: 560, boxSizing: "border-box", background: dark ? "#182019" : "#FFFFFF", border: `1px solid ${dark ? "#2B342E" : "#E7E9E1"}`, borderRadius: 30, padding: "34px 28px 28px", boxShadow: "0 24px 60px rgba(0,0,0,0.28)", textAlign: "center" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 10 }}>
-          <LogoMark size={42} />
-          <div style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 25, letterSpacing: "-0.8px", color: dark ? "#F1F4F0" : "#12181B", lineHeight: 1 }}>
+          <LogoMark size={48} />
+          <div style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 27, letterSpacing: "-0.8px", color: dark ? "#F1F4F0" : "#12181B", lineHeight: 1 }}>
             Pocket<span style={{ color: "#F47B20" }}>Rule</span>
           </div>
         </div>
-        <p style={{ fontFamily: "Inter, sans-serif", fontSize: 15, color: dark ? "rgba(241,244,240,0.62)" : "#707E74", margin: "0 0 14px" }}>Welcome back 👋</p>
-        <h1 style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 22, color: dark ? "#FFFFFF" : "#12181B", margin: "0 0 4px" }}>Enter your PIN</h1>
-        <p style={{ fontFamily: "Inter, sans-serif", fontSize: 13, color: error ? "#FF8A80" : (dark ? "rgba(241,244,240,0.48)" : "#707E74"), margin: "0 0 16px", minHeight: 18 }}>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: 16, color: dark ? "rgba(241,244,240,0.62)" : "#707E74", margin: "0 0 22px" }}>Welcome back 👋</p>
+        <h1 style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 21, color: dark ? "#FFFFFF" : "#12181B", margin: "0 0 5px" }}>Enter your PIN</h1>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: error ? "#FF8A80" : (dark ? "rgba(241,244,240,0.48)" : "#707E74"), margin: "0 0 22px", minHeight: 18 }}>
           {error ? "Wrong PIN, try again" : "Unlock PocketRule"}
         </p>
         <PinPad value={entry} onDigit={digit} onDelete={() => setEntry(entry.slice(0, -1))} dark={dark} shake={error} />
 
-        <div style={{ marginTop: 18, width: "100%", display: "flex", justifyContent: "center" }}>
+        <div style={{ marginTop: 26, width: "100%", display: "flex", justifyContent: "center" }}>
           {!confirmForgot ? (
             <button onClick={() => setConfirmForgot(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#F47B20", fontFamily: "Inter, sans-serif", fontWeight: 600, fontSize: 13, textDecoration: "underline", textUnderlineOffset: 3 }}>
               Forgot your PIN?
@@ -1411,7 +1485,7 @@ function LockScreen({ pin, onUnlock, onForgot, dark }) {
           )}
         </div>
 
-        <div style={{ marginTop: 18, display: "flex", justifyContent: "center", alignItems: "center", gap: 7, color: dark ? "rgba(241,244,240,0.42)" : "#707E74", fontFamily: '"Roboto Mono", monospace', fontSize: 12, letterSpacing: "0.5px" }}>
+        <div style={{ marginTop: 24, display: "flex", justifyContent: "center", alignItems: "center", gap: 8, color: dark ? "rgba(241,244,240,0.42)" : "#707E74", fontFamily: '"Roboto Mono", monospace', fontSize: 12, letterSpacing: "0.5px" }}>
           <span style={{ fontSize: 15 }}>🔒</span>
           <span>PIN protected</span><span>•</span><span>Stored locally</span>
         </div>
@@ -1680,10 +1754,13 @@ function PlanTracker({ plan, currency, onAddExpense, onEditExpense, onDeleteExpe
             <p style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 21, color: "#fff", margin: "5px 0 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{plan.name || "Current plan"}</p>
             <p style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: "rgba(255,255,255,0.76)", margin: "4px 0 0" }}>{new Date(plan.date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</p>
           </div>
+          <div style={{ width: 42, height: 42, borderRadius: 13, background: "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Calendar size={22} color="#fff" strokeWidth={2.1} />
+          </div>
         </div>
 
         <div style={{ textAlign: "center", marginTop: 22 }}>
-          <p className="pr-money pr-hero-remaining" style={{ fontFamily: "Roboto, sans-serif", fontWeight: 800, fontSize: 34, letterSpacing: "-0.045em", margin: 0, color: "#fff" }}>{formatMoney(totalRemaining, currency)}</p>
+          <p className="pr-money" style={{ fontFamily: "Roboto, sans-serif", fontWeight: 800, fontSize: 34, letterSpacing: "-0.045em", margin: 0, color: "#fff" }}>{formatMoney(totalRemaining, currency)}</p>
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 800, margin: "4px 0 0", color: "rgba(255,255,255,0.86)", textTransform: "uppercase", letterSpacing: .8 }}>Remaining</p>
         </div>
 
@@ -2005,7 +2082,7 @@ function SpendSheet({ category, currency, transactions = [], onClose, onAdd, onE
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 7, borderBottom: "1px dashed rgba(255,255,255,0.45)", paddingBottom: 6, marginTop: 4 }}>
             <span style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 25 }}>{currencySymbol(currency)}</span>
-            <input autoFocus inputMode="numeric" value={amount ? Number(String(amount).replace(/[^0-9]/g, "")).toLocaleString("en-US") : ""} onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))} placeholder="0" style={{ width: "100%", border: "none", outline: "none", background: "transparent", color: "#fff", fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 27 }} />
+            <input autoFocus inputMode="numeric" value={amount ? Number(String(amount).replace(/[^0-9]/g, "")).toLocaleString("en-US") : ""} onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))} placeholder="0" style={{ width: "100%", border: "none", outline: "none", background: "transparent", color: "#fff", fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 31, lineHeight: 1.05 }} />
           </div>
         </div>
 
@@ -2319,7 +2396,7 @@ function HomeScreen({ rules, activeRule, income, setIncome, currency, onSave, on
   }, [activePlan]);
 
   return (
-    <div style={{ padding: "4px 14px 28px" }}>
+    <div style={{ padding: "4px 18px 28px" }}>
       {!activePlan && (
         <section style={{ marginBottom: 16 }}>
           <div style={{
@@ -2657,7 +2734,7 @@ function RuleEditor({ initial, onCancel, onSave, firstRun }) {
   return (
     <div style={{ paddingBottom: 24 }}>
       {firstRun ? (
-        <div style={{ padding: "14px 14px 10px" }}>
+        <div style={{ padding: "16px 20px 10px" }}>
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
             <p style={{ fontFamily: "Roboto, sans-serif", fontSize: 12, letterSpacing: 1, color: GOLD, fontWeight: 600, margin: 0 }}>STEP 2 OF 2</p>
             <button
@@ -2676,12 +2753,12 @@ function RuleEditor({ initial, onCancel, onSave, firstRun }) {
         <ScreenHeader title={initial.id ? "Edit Rule" : "New Rule"} subtitle="Name it, split it, make it yours." onBack={onCancel} />
       )}
       {!firstRun && (
-        <div style={{ margin: "0 14px 12px", display: "flex", alignItems: "center", gap: 7, background: ACTIVE_TINT, border: `1px solid ${LINE}`, borderRadius: 10, padding: "8px 10px", color: MUTED }}>
+        <div style={{ margin: "0 20px 12px", display: "flex", alignItems: "center", gap: 7, background: ACTIVE_TINT, border: `1px solid ${LINE}`, borderRadius: 10, padding: "8px 10px", color: MUTED }}>
           <Pencil size={13} color={GOLD} strokeWidth={2.4} />
           <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, lineHeight: 1.3 }}>Tap any category name or percentage to edit it.</span>
         </div>
       )}
-      <div style={{ padding: "0 14px" }}>
+      <div style={{ padding: "0 20px" }}>
         <div style={{ background: PAPER_DIM, border: `1px solid ${LINE}`, borderRadius: 16, padding: 14, boxShadow: "none", marginBottom: 14 }}>
           <label style={{ ...labelStyle, marginBottom: 4 }}>Rule name</label>
           <input
@@ -2800,7 +2877,7 @@ function RulesScreen({ rules, activeRuleId, onNew, onOpen, onDuplicate, onDelete
   const [openRowKey, setOpenRowKey] = useState(null);
   return (
     <div style={{ paddingBottom: 24 }}>
-      <div style={{ padding: "16px 14px 12px", textAlign: "center" }}>
+      <div style={{ padding: "20px 20px 14px", textAlign: "center" }}>
         <h1 style={{ fontFamily: "Sora, sans-serif", fontWeight: 700, fontSize: 24, color: INK, margin: 0, textAlign: "center", width: "100%" }}>Rules</h1>
         <p style={{ fontFamily: "Inter, sans-serif", fontSize: 13.5, color: MUTED, margin: "4px auto 12px" }}>Pick one to use, or build a new Rule.</p>
         <button
@@ -2812,10 +2889,10 @@ function RulesScreen({ rules, activeRuleId, onNew, onOpen, onDuplicate, onDelete
           <Plus size={26} strokeWidth={2.5} />
         </button>
       </div>
-      <div style={{ height: 1, background: `repeating-linear-gradient(90deg, ${LINE} 0 6px, transparent 6px 12px)`, margin: "0 14px 16px" }} />
-      <p style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED, margin: "0 14px 12px" }}>Swipe a Rule left for quick actions.</p>
+      <div style={{ height: 1, background: `repeating-linear-gradient(90deg, ${LINE} 0 6px, transparent 6px 12px)`, margin: "0 20px 16px" }} />
+      <p style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED, margin: "0 20px 12px" }}>Swipe a Rule left for quick actions.</p>
 
-      <div style={{ padding: "0 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 10 }}>
         {sortRulesForDisplay(rules, activeRuleId).map((r, i) => {
           const active = r.id === activeRuleId;
           return (
@@ -2863,7 +2940,7 @@ function RuleDetailScreen({ rule, isActive, canDelete, onBack, onUse, onEdit, on
     return (
       <div style={{ paddingBottom: 24 }}>
         <ScreenHeader title="Rule" onBack={onBack} />
-        <div style={{ padding: "0 14px" }}>
+        <div style={{ padding: "0 20px" }}>
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: 13, color: MUTED, textAlign: "center", marginTop: 20 }}>
             This Rule couldn't be found. It may have been deleted.
           </p>
@@ -2886,7 +2963,7 @@ function RuleDetailScreen({ rule, isActive, canDelete, onBack, onUse, onEdit, on
           </span>
         )}
       />
-      <div style={{ padding: "0 14px" }}>
+      <div style={{ padding: "0 20px" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
           {colored.map((c) => (
             <div key={c.id} style={{ background: PAPER_DIM, border: `1px solid ${LINE}`, borderRadius: 12, padding: "11px 14px" }}>
@@ -2951,7 +3028,7 @@ function HistoryScreen({ history, currency, onBack, onOpen, onDelete }) {
   return (
     <div style={{ paddingBottom: 24 }}>
       <ScreenHeader title="History" subtitle={`${history.length} saved plan${history.length === 1 ? "" : "s"}`} onBack={onBack} />
-      <div style={{ padding: "0 14px" }}>
+      <div style={{ padding: "0 20px" }}>
         {sorted.length === 0 && (
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: 13, color: MUTED, textAlign: "center", marginTop: 30 }}>
             Nothing saved yet. Create a plan on Home, then tap "Save."
@@ -3154,7 +3231,7 @@ function HistoryDetailScreen({ entry, currency, onBack }) {
     return (
       <div style={{ paddingBottom: 24 }}>
         <ScreenHeader title="Money Plan" onBack={onBack} />
-        <div style={{ padding: "0 14px" }}>
+        <div style={{ padding: "0 20px" }}>
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: 13, color: MUTED, textAlign: "center", marginTop: 20 }}>
             This entry couldn't be found. It may have been removed.
           </p>
@@ -3208,7 +3285,7 @@ function HistoryDetailScreen({ entry, currency, onBack }) {
         subtitle={new Date(entry.date).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}
         onBack={onBack}
       />
-      <div style={{ padding: "0 14px" }}>
+      <div style={{ padding: "0 20px" }}>
         <MoneyRuleCard ruleName={entry.ruleName} income={entry.income} currency={displayCurrency} categories={entry.categories} />
 
         <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -3353,7 +3430,7 @@ function SettingsScreen({ settings, onChange, onPinCreated, onLockNow, onReset, 
   return (
     <div style={{ paddingBottom: 24 }}>
       <ScreenHeader title="Settings" subtitle="Money display, appearance, and planning." />
-      <div style={{ padding: "0 14px", display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 14 }}>
 
         <div>
           <label style={settingsLabelStyle}>Currency</label>
@@ -3562,6 +3639,7 @@ function SettingsScreen({ settings, onChange, onPinCreated, onLockNow, onReset, 
                 "3. Reminders — If you enable plan reminders, the app may request notification permission from your device. Reminder settings are stored with your app settings.",
                 "4. Sharing — PocketRule does not automatically publish your plans. When you choose Share, the app uses your device's share sheet so you choose the destination.",
                 "5. Backups — Exported backup files may contain your rules, plans, history, and settings. Treat backup files as private financial records and store them securely.",
+                "6. Third-party services and advertising — PocketRule uses Google AdMob to display ads in eligible areas of the app. Google may process device and advertising information as described in Google's applicable privacy documentation. PocketRule uses the Google User Messaging Platform (UMP) consent flow where required. Ads are not shown during onboarding or critical money-entry flows.",
                 "7. Security — No digital storage method can be guaranteed to be perfectly secure. Use a device lock and PocketRule PIN when appropriate, and do not share backup files casually.",
                 "8. Deletion — You can reset PocketRule from Settings to remove the app's locally stored data. Separately exported backup files must be deleted from the location where you saved them.",
                 "9. Changes — We may update this policy as PocketRule evolves. The updated date will be shown here.",
@@ -3697,7 +3775,7 @@ function ShareCardScreen({ income, categories, ruleName, currency, onClose }) {
   return (
     <div style={{ paddingBottom: 24 }}>
       <ScreenHeader title="Share My PocketRule" subtitle="A clean summary of your money plan." onBack={onClose} />
-      <div style={{ padding: "0 14px" }}>
+      <div style={{ padding: "0 20px" }}>
         <MoneyRuleCard ruleName={ruleName} income={incomeNum} currency={currency} categories={categories} />
 
         <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -3875,7 +3953,7 @@ function ResourcesScreen({ targetId = null }) {
   }, [targetId]);
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", padding: "14px 14px 30px", boxSizing: "border-box" }}>
+    <div style={{ height: "100%", overflowY: "auto", padding: "18px 18px 30px", boxSizing: "border-box" }}>
       <div style={{ textAlign: "center" }}>
         <div style={{ width: 46, height: 46, borderRadius: 14, background: ACTIVE_TINT, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 9px" }}>
           <BookOpen size={22} color={GOLD} strokeWidth={2.2} />
@@ -3928,21 +4006,21 @@ function BottomNav({ active, onNav }) {
     { id: "settings", label: "Settings", icon: SettingsIcon },
   ];
   return (
-    <nav aria-label="Primary navigation" className="pr-bottom-nav" style={{ display: "flex", borderTop: `1px solid ${LINE}`, background: PAPER_DIM, padding: "5px 3px max(9px, env(safe-area-inset-bottom))", boxShadow: "0 -8px 20px -14px rgba(18,24,27,0.15)", flexShrink: 0 }}>
+    <div style={{ display: "flex", borderTop: `1px solid ${LINE}`, background: PAPER_DIM, paddingTop: 5, boxShadow: "0 -8px 20px -14px rgba(18,24,27,0.15)" }}>
       {items.map((it) => {
         const Icon = it.icon;
         const isActive = active === it.id;
         return (
-          <button key={it.id} onClick={() => onNav(it.id)} aria-current={isActive ? "page" : undefined} style={{ flex: "1 1 0", minWidth: 0, background: "none", border: "none", padding: "4px 1px 2px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, cursor: "pointer", color: isActive ? GOLD : NAV_MUTED, overflow: "hidden" }}>
-            <div style={{ width: "100%", height: 27, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", color: isActive ? GOLD : NAV_MUTED }}>
-              <Icon size={21} strokeWidth={isActive ? 2.5 : 2.0} />
-              {isActive && <span style={{ position: "absolute", bottom: -1, width: 18, height: 3, borderRadius: 99, background: GOLD }} />}
+          <button key={it.id} onClick={() => onNav(it.id)} style={{ flex: 1, background: "none", border: "none", padding: "6px 0 10px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "pointer", color: isActive ? GOLD : NAV_MUTED }}>
+            <div style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", color: isActive ? GOLD : NAV_MUTED }}>
+              <Icon size={19} strokeWidth={isActive ? 2.5 : 2.0} />
+              {isActive && <span style={{ position: "absolute", bottom: -2, width: 18, height: 3, borderRadius: 99, background: GOLD }} />}
             </div>
-            <span className="pr-nav-label" style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, lineHeight: 1.15, fontWeight: isActive ? 800 : 600, whiteSpace: "nowrap", textAlign: "center", maxWidth: "100%" }}>{it.label}</span>
+            <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: isActive ? 800 : 600 }}>{it.label}</span>
           </button>
         );
       })}
-    </nav>
+    </div>
   );
 }
 
@@ -4065,7 +4143,7 @@ function PlansScreen({ plans, currency, onBack, onOpenActive, onOpenCompleted })
   return (
     <div style={{ paddingBottom: 24 }}>
       <ScreenHeader title="Plan" subtitle="Give every amount a job, then follow your plan." />
-      <div style={{ padding: "0 14px" }}>
+      <div style={{ padding: "0 20px" }}>
         {active ? (
           <button onClick={onOpenActive} style={{ width: "100%", textAlign: "left", border: "none", background: GREEN_CARD_GRADIENT, color: "#fff", borderRadius: 20, padding: 16, boxShadow: SHADOW_BTN, cursor: "pointer" }}>
             {(() => { const s = planSummary(active); return (
@@ -4284,7 +4362,7 @@ function CompletedPlanDetailScreen({ onDeletePlan, plan, currency, onBack, isDar
   return (
     <div style={{ paddingBottom: 24 }}>
       <ScreenHeader title="Completed Plan" subtitle="Review the full breakdown." onBack={onBack} />
-      <div style={{ padding: "0 14px" }}>
+      <div style={{ padding: "0 20px" }}>
         <div style={{ background: GREEN_CARD_GRADIENT, color: "#fff", borderRadius: 20, padding: 17, boxShadow: SHADOW_BTN }}>
           <div style={{ position: "relative", textAlign: "center", padding: "0 34px" }}><p style={{ fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 800, letterSpacing: .7, textTransform: "uppercase", margin: 0, opacity: .75 }}>Completed</p><h2 style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 19, margin: "4px 0 0" }}>{plan.name || "Money Plan"}</h2><p style={{ fontFamily: "Inter, sans-serif", fontSize: 12, margin: "4px 0 0", opacity: .72 }}>{new Date(plan.completedAt || plan.date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</p><Check size={22} strokeWidth={3} style={{ position: "absolute", right: 0, top: 0 }} /></div>
           <div style={{ marginTop: 18, fontFamily: "Roboto, sans-serif", fontSize: 26, fontWeight: 700, letterSpacing: "-0.035em" }}>{formatMoney(budget, displayCurrency)}</div>
@@ -4464,6 +4542,23 @@ function PocketRuleAppInner() {
     return () => { if (mq.removeEventListener) mq.removeEventListener("change", handler); else mq.removeListener(handler); };
   }, [data.settings.appearance]);
 
+  useEffect(() => {
+    if (!loaded || !isNativeApp()) return;
+
+    startPocketRuleAdMob().catch((error) => {
+      console.error("PocketRule AdMob startup failed:", error);
+    });
+  }, [loaded]);
+
+  useEffect(() => {
+    if (!loaded || !isNativeApp()) return;
+    if (data.onboarded && screen === "resources") {
+      showPocketRuleBanner();
+    } else {
+      hidePocketRuleBanner();
+    }
+    return () => { hidePocketRuleBanner(); };
+  }, [loaded, data.onboarded, screen]);
 
   useEffect(() => {
     (async () => {
@@ -4608,10 +4703,9 @@ function PocketRuleAppInner() {
         if (!name) return d;
         plans = plans.map((p) => p.status === "active" ? { ...p, status: "completed", completedAt: Date.now() } : p);
 
-        const planId = uid("plan");
         const plan = {
-          id: planId, date: Date.now(), name, ruleId: rule.id, ruleName: rule.name, income: incomeNum, currency: d.settings.currency,
-          categories: allocated.map((c, index) => ({ id: `${planId}-cat-${index}`, name: c.name, pct: c.pct, budget: c.amount, spent: 0 })),
+          id: uid("plan"), date: Date.now(), name, ruleId: rule.id, ruleName: rule.name, income: incomeNum, currency: d.settings.currency,
+          categories: allocated.map((c) => ({ id: uid("pc"), name: c.name, pct: c.pct, budget: c.amount, spent: 0 })),
           transactions: [], hasTransactionLedger: true, status: "active",
         };
         plans = [...plans, plan];
@@ -5077,10 +5171,6 @@ function PocketRuleAppInner() {
         />
       <style>{FONTS}</style>
       <div style={{ width: "min(100%, 780px)", height: "min(780px, calc(100vh - 28px))", minHeight: 0, boxSizing: "border-box", background: PAPER, color: INK, colorScheme: isDark ? "dark" : "light", borderRadius: 34, border: "6px solid #000000", boxShadow: "0 28px 70px rgba(0,0,0,0.52)", overflow: "hidden", display: "flex", flexDirection: "column", position: "relative", ...themeVars }}>
-        <div className="pr-device-top" style={{ height: "max(24px, env(safe-area-inset-top))", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: PAPER }}>
-          <div style={{ width: 90, height: 18, background: "#000000", borderRadius: 10 }} />
-        </div>
-
         {loaded && data.onboarded && !isLocked && screen !== "firstRule" && (
           <div style={{ position: "relative", height: 38, padding: "3px 20px 9px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -5093,7 +5183,7 @@ function PocketRuleAppInner() {
           </div>
         )}
 
-        <div className="pr-app-content" style={{ flex: 1, overflowY: "auto" }}>
+        <div style={{ flex: 1, overflowY: "auto" }}>
           {!loaded ? (
             <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <LogoMark size={40} />
