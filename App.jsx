@@ -296,7 +296,7 @@ function firePocketRuleReminder() {
   try { new Notification(POCKETRULE_REMINDER_TITLE, { body: POCKETRULE_REMINDER_BODY, tag: "pocketrule-reminder" }); } catch {}
 }
 
-const APP_VERSION = "1.18.9";
+const APP_VERSION = "1.18.10";
 const STORAGE_KEY = "pocketrule-state-v1";
 const ENCRYPTED_STORAGE_KEY = "pocketrule-state-v1-encrypted";
 const SECURITY_META_KEY = "pocketrule-security-meta-v1";
@@ -1239,7 +1239,7 @@ function PinPad({ value, onDigit, onDelete, dark, shake }) {
   const pinLine = "#DDE3DE";
   const pinBg = "#F5F7F3";
   return (
-    <div className={shake ? "pr-shake" : undefined} style={{ width: "100%", background: "#FFFFFF", border: `1px solid ${pinLine}`, borderRadius: 22, padding: "16px 12px 12px", boxShadow: "0 8px 24px rgba(18,24,27,0.10)" }}>
+    <div className={shake ? "pr-pin-pad pr-shake" : "pr-pin-pad"} style={{ width: "100%", background: "#FFFFFF", border: `1px solid ${pinLine}`, borderRadius: 22, padding: "16px 12px 12px", boxShadow: "0 8px 24px rgba(18,24,27,0.10)" }}>
       <div style={{ display: "flex", justifyContent: "center", gap: 12, marginBottom: 26 }}>
         {[0,1,2,3].map((i) => (
           <div key={i} style={{
@@ -1306,22 +1306,22 @@ function LockScreen({ pin, onUnlock, onForgot, dark }) {
   }
 
   return (
-    <div style={{ minHeight: "100%", width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", padding: "28px 18px", background: dark ? "#0A100D" : "#F5F6F0" }}>
-      <div style={{ width: "100%", maxWidth: 560, boxSizing: "border-box", background: dark ? "#182019" : "#FFFFFF", border: `1px solid ${dark ? "#2B342E" : "#E7E9E1"}`, borderRadius: 30, padding: "34px 28px 28px", boxShadow: "0 24px 60px rgba(0,0,0,0.28)", textAlign: "center" }}>
+    <div className="pr-lock-screen" style={{ minHeight: "100%", width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px 12px", background: dark ? "#0A100D" : "#F5F6F0" }}>
+      <div className="pr-lock-card" style={{ width: "100%", maxWidth: 560, boxSizing: "border-box", background: dark ? "#182019" : "#FFFFFF", border: `1px solid ${dark ? "#2B342E" : "#E7E9E1"}`, borderRadius: 26, padding: "24px 20px 20px", boxShadow: "0 24px 60px rgba(0,0,0,0.28)", textAlign: "center" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 10 }}>
-          <LogoMark size={48} />
-          <div style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 27, letterSpacing: "-0.8px", color: dark ? "#F1F4F0" : "#12181B", lineHeight: 1 }}>
+          <LogoMark size={42} />
+          <div style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 25, letterSpacing: "-0.8px", color: dark ? "#F1F4F0" : "#12181B", lineHeight: 1 }}>
             Pocket<span style={{ color: "#F47B20" }}>Rule</span>
           </div>
         </div>
-        <p style={{ fontFamily: "Inter, sans-serif", fontSize: 16, color: dark ? "rgba(241,244,240,0.62)" : "#707E74", margin: "0 0 22px" }}>Welcome back 👋</p>
-        <h1 style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 21, color: dark ? "#FFFFFF" : "#12181B", margin: "0 0 5px" }}>Enter your PIN</h1>
-        <p style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: error ? "#FF8A80" : (dark ? "rgba(241,244,240,0.48)" : "#707E74"), margin: "0 0 22px", minHeight: 18 }}>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: 15, color: dark ? "rgba(241,244,240,0.62)" : "#707E74", margin: "0 0 14px" }}>Welcome back 👋</p>
+        <h1 style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 22, color: dark ? "#FFFFFF" : "#12181B", margin: "0 0 4px" }}>Enter your PIN</h1>
+        <p style={{ fontFamily: "Inter, sans-serif", fontSize: 13, color: error ? "#FF8A80" : (dark ? "rgba(241,244,240,0.48)" : "#707E74"), margin: "0 0 16px", minHeight: 18 }}>
           {error ? "Wrong PIN, try again" : "Unlock PocketRule"}
         </p>
         <PinPad value={entry} onDigit={digit} onDelete={() => setEntry(entry.slice(0, -1))} dark={dark} shake={error} />
 
-        <div style={{ marginTop: 26, width: "100%", display: "flex", justifyContent: "center" }}>
+        <div style={{ marginTop: 18, width: "100%", display: "flex", justifyContent: "center" }}>
           {!confirmForgot ? (
             <button onClick={() => setConfirmForgot(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#F47B20", fontFamily: "Inter, sans-serif", fontWeight: 600, fontSize: 13, textDecoration: "underline", textUnderlineOffset: 3 }}>
               Forgot your PIN?
@@ -1357,7 +1357,7 @@ function LockScreen({ pin, onUnlock, onForgot, dark }) {
           )}
         </div>
 
-        <div style={{ marginTop: 24, display: "flex", justifyContent: "center", alignItems: "center", gap: 8, color: dark ? "rgba(241,244,240,0.42)" : "#707E74", fontFamily: '"Roboto Mono", monospace', fontSize: 12, letterSpacing: "0.5px" }}>
+        <div style={{ marginTop: 18, display: "flex", justifyContent: "center", alignItems: "center", gap: 7, color: dark ? "rgba(241,244,240,0.42)" : "#707E74", fontFamily: '"Roboto Mono", monospace', fontSize: 12, letterSpacing: "0.5px" }}>
           <span style={{ fontSize: 15 }}>🔒</span>
           <span>PIN protected</span><span>•</span><span>Stored locally</span>
         </div>
