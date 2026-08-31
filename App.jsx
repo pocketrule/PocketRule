@@ -84,10 +84,9 @@ input::placeholder, textarea::placeholder { color: var(--pr-muted); opacity: 1; 
 .pr-money { font-family: "Roboto", sans-serif !important; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; font-weight: 600; letter-spacing: -0.01em; }
 .pr-number { font-family: "Roboto", sans-serif !important; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; font-weight: 500; letter-spacing: -0.015em; }
 select option { color: var(--pr-ink); background: var(--pr-paper-dim); }
-.pr-amount-input { color: var(--pr-ink) !important; font-family: "Roboto", sans-serif !important; background: transparent !important; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+.pr-amount-input { color: #fff !important; font-family: "Roboto", sans-serif !important; background: transparent !important; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
 .pr-amount-input::placeholder { color: transparent; }
-.pr-amount-input { caret-color: var(--pr-ink) !important; }
-.pr-spending-amount-input { color: #FFFFFF !important; caret-color: #FFFFFF !important; }
+.pr-amount-input { caret-color: #FFFFFF !important; }
 button { color: inherit; }
 @keyframes pr-shake { 10%,90%{transform:translateX(-2px);} 20%,80%{transform:translateX(3px);} 30%,50%,70%{transform:translateX(-5px);} 40%,60%{transform:translateX(5px);} }
 .pr-shake { animation: pr-shake 400ms ease; }
@@ -120,6 +119,12 @@ const CURRENCIES = [
    REMINDERS — MONEY RECEIVED / EXPECTED
 --------------------------------------------------------- */
 const POCKETRULE_REMINDER_ID = 481516;
+const POCKETRULE_MONTHLY_REMINDER_BASE_ID = 481517;
+const POCKETRULE_MONTHLY_REMINDER_COUNT = 12;
+const POCKETRULE_REMINDER_IDS = [
+  POCKETRULE_REMINDER_ID,
+  ...Array.from({ length: POCKETRULE_MONTHLY_REMINDER_COUNT }, (_, index) => POCKETRULE_MONTHLY_REMINDER_BASE_ID + index),
+];
 const POCKETRULE_NOTIFICATION_CHANNEL = "pocketrule-reminders-v2";
 const POCKETRULE_ADMOB_BANNER_ID = import.meta.env.VITE_ADMOB_BANNER_ID || "ca-app-pub-3940256099942544/6300978111";
 const POCKETRULE_ADMOB_TESTING = String(import.meta.env.VITE_ADMOB_TESTING ?? "true").toLowerCase() !== "false";
@@ -282,25 +287,31 @@ async function ensureExactNotificationAccess({ openSettings = false } = {}) {
 
   try {
     if (typeof LocalNotifications.checkExactNotificationSetting !== "function") {
-      // Older plugin versions do not expose the exact-alarm API. Do not block
-      // normal notification scheduling on those versions.
-      return "granted";
+      // Older plugin versions do not expose exact-alarm access. Normal
+      // notification scheduling is still allowed.
+      return "unknown";
     }
 
     const current = await LocalNotifications.checkExactNotificationSetting();
     if (current?.exact_alarm === "granted") return "granted";
 
-    // Only open Android's Alarms & reminders screen after the user explicitly
-    // asks to enable reminders. Never launch Settings on app startup.
+    // Exact alarms improve timing, but they must never be allowed to make the
+    // reminder feature completely fail. If the user explicitly enabled the
+    // reminder, offer Android's setting screen once, then continue and allow
+    // the scheduler to use its non-exact path when exact access is unavailable.
     if (openSettings && typeof LocalNotifications.changeExactNotificationSetting === "function") {
-      const changed = await LocalNotifications.changeExactNotificationSetting();
-      return changed?.exact_alarm === "granted" ? "granted" : "denied";
+      try {
+        const changed = await LocalNotifications.changeExactNotificationSetting();
+        return changed?.exact_alarm === "granted" ? "granted" : "denied";
+      } catch (error) {
+        console.warn("PocketRule exact-alarm settings could not be opened:", error);
+      }
     }
 
     return "denied";
   } catch (error) {
-    console.error("PocketRule exact-alarm check failed:", error);
-    return "denied";
+    console.warn("PocketRule exact-alarm check failed; using non-exact scheduling:", error);
+    return "unknown";
   }
 }
 
@@ -318,12 +329,52 @@ function buildOneTimeReminderDate(reminder) {
   if (!dateValue) return null;
   const [year, month, day] = dateValue.split("-").map(Number);
   const date = new Date(year, month - 1, day, reminder24Hour(reminder), 0, 0, 0);
-  return Number.isNaN(date.getTime()) ? null : date;
+  if (Number.isNaN(date.getTime())) return null;
+
+  // JavaScript normalizes invalid dates (for example, February 31) into a
+  // different month. Reject those values instead of silently moving the
+  // reminder to the wrong day.
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    return null;
+  }
+
+  return date;
 }
 
 async function cancelPocketRuleReminder() {
   if (!isNativeApp()) return;
-  try { await LocalNotifications.cancel({ notifications: [{ id: POCKETRULE_REMINDER_ID }] }); } catch {}
+  try {
+    await LocalNotifications.cancel({
+      notifications: POCKETRULE_REMINDER_IDS.map((id) => ({ id })),
+    });
+  } catch (error) {
+    console.warn("PocketRule reminder cancellation failed:", error);
+  }
+}
+
+function lastDayOfMonth(year, monthIndex) {
+  return new Date(year, monthIndex + 1, 0).getDate();
+}
+
+function buildMonthlyReminderDates(reminder, count = POCKETRULE_MONTHLY_REMINDER_COUNT) {
+  const requestedDay = Math.min(31, Math.max(1, Number(reminder?.dayOfMonth) || 1));
+  const hour = reminder24Hour(reminder);
+  const now = new Date();
+  const dates = [];
+
+  // Build one-time notifications for the next 12 occurrences. This makes
+  // days such as the 29th, 30th and 31st work correctly in shorter months.
+  for (let offset = 0; dates.length < count && offset < count + 2; offset += 1) {
+    const monthDate = new Date(now.getFullYear(), now.getMonth() + offset, 1, hour, 0, 0, 0);
+    const year = monthDate.getFullYear();
+    const month = monthDate.getMonth();
+    const day = Math.min(requestedDay, lastDayOfMonth(year, month));
+    const candidate = new Date(year, month, day, hour, 0, 0, 0);
+
+    if (candidate.getTime() > now.getTime()) dates.push(candidate);
+  }
+
+  return dates;
 }
 
 async function schedulePocketRuleReminder(reminder, { openSettingsIfNeeded = false } = {}) {
@@ -332,10 +383,16 @@ async function schedulePocketRuleReminder(reminder, { openSettingsIfNeeded = fal
     await cancelPocketRuleReminder();
     return { ok: true, reason: "off" };
   }
-  if ((await requestPocketRuleNotifications()) !== "granted") return { ok: false, reason: "permission" };
+  if ((await requestPocketRuleNotifications()) !== "granted") {
+    return { ok: false, reason: "permission" };
+  }
 
-  const exactAccess = await ensureExactNotificationAccess({ openSettings: openSettingsIfNeeded });
-  if (exactAccess !== "granted") return { ok: false, reason: "exact-alarm-permission" };
+  // Exact timing is preferred, but it is not a prerequisite for reminders.
+  // Android can still deliver a normal/inexact scheduled notification.
+  // Exact-alarm access is optional. Local Notifications will fall back to an
+  // inexact alarm when exact access is unavailable. Do not block reminders or
+  // send users into Android Settings just because exact timing is unavailable.
+  const allowWhileIdle = true;
 
   try {
     await LocalNotifications.createChannel({
@@ -344,55 +401,83 @@ async function schedulePocketRuleReminder(reminder, { openSettingsIfNeeded = fal
       description: "Reminders for money you expect to receive.",
       importance: 4,
       visibility: 1,
-      sound: "pocketrule_reminder.wav",
       vibration: true,
     });
+
     await cancelPocketRuleReminder();
 
-    let schedule;
+    let notifications = [];
+
     if (reminder.frequency === "once") {
       const at = buildOneTimeReminderDate(reminder);
       if (!at || at.getTime() <= Date.now()) return { ok: false, reason: "invalid-date" };
-      schedule = { at, allowWhileIdle: true };
-    } else if (reminder.frequency === "daily") {
-      schedule = { on: { hour: reminder24Hour(reminder), minute: 0 }, allowWhileIdle: true };
-    } else if (reminder.frequency === "weekly") {
-      const weekday = { Sunday:1, Monday:2, Tuesday:3, Wednesday:4, Thursday:5, Friday:6, Saturday:7 };
-      schedule = { on: { weekday: weekday[String(reminder.day)] || 1, hour: reminder24Hour(reminder), minute: 0 }, allowWhileIdle: true };
-    } else if (reminder.frequency === "monthly") {
-      schedule = { on: { day: Math.min(31, Math.max(1, Number(reminder.dayOfMonth) || 1)), hour: reminder24Hour(reminder), minute: 0 }, allowWhileIdle: true };
-    } else {
-      return { ok: false, reason: "unsupported-frequency" };
-    }
-
-    const result = await LocalNotifications.schedule({
-      notifications: [{
+      notifications = [{
         id: POCKETRULE_REMINDER_ID,
         title: POCKETRULE_REMINDER_TITLE,
         body: POCKETRULE_REMINDER_BODY,
         channelId: POCKETRULE_NOTIFICATION_CHANNEL,
-        schedule,
+        schedule: { at, allowWhileIdle },
         autoCancel: true,
-        sound: "pocketrule_reminder.wav",
-        extra: { pocketrule: "money-reminder" },
-      }],
-    });
-
-    const scheduled = result?.notifications?.length > 0;
-
-    if (!scheduled) {
-      return { ok: false, reason: "not-scheduled" };
+          extra: { pocketrule: "money-reminder" },
+      }];
+    } else if (reminder.frequency === "daily") {
+      notifications = [{
+        id: POCKETRULE_REMINDER_ID,
+        title: POCKETRULE_REMINDER_TITLE,
+        body: POCKETRULE_REMINDER_BODY,
+        channelId: POCKETRULE_NOTIFICATION_CHANNEL,
+        schedule: { on: { hour: reminder24Hour(reminder), minute: 0 }, allowWhileIdle },
+        autoCancel: true,
+          extra: { pocketrule: "money-reminder" },
+      }];
+    } else if (reminder.frequency === "weekly") {
+      const weekday = { Sunday: 1, Monday: 2, Tuesday: 3, Wednesday: 4, Thursday: 5, Friday: 6, Saturday: 7 };
+      notifications = [{
+        id: POCKETRULE_REMINDER_ID,
+        title: POCKETRULE_REMINDER_TITLE,
+        body: POCKETRULE_REMINDER_BODY,
+        channelId: POCKETRULE_NOTIFICATION_CHANNEL,
+        schedule: {
+          on: {
+            weekday: weekday[String(reminder.day)] || 1,
+            hour: reminder24Hour(reminder),
+            minute: 0,
+          },
+          allowWhileIdle,
+        },
+        autoCancel: true,
+          extra: { pocketrule: "money-reminder" },
+      }];
+    } else if (reminder.frequency === "monthly") {
+      const dates = buildMonthlyReminderDates(reminder);
+      if (!dates.length) return { ok: false, reason: "invalid-date" };
+      notifications = dates.map((at, index) => ({
+        id: POCKETRULE_MONTHLY_REMINDER_BASE_ID + index,
+        title: POCKETRULE_REMINDER_TITLE,
+        body: POCKETRULE_REMINDER_BODY,
+        channelId: POCKETRULE_NOTIFICATION_CHANNEL,
+        schedule: { at, allowWhileIdle },
+        autoCancel: true,
+          extra: { pocketrule: "money-reminder", monthly: true },
+      }));
+    } else {
+      return { ok: false, reason: "unsupported-frequency" };
     }
 
-    // Verify that Android actually has the reminder pending.
+    const result = await LocalNotifications.schedule({ notifications });
+    const scheduledIds = new Set((result?.notifications || []).map((notification) => notification.id));
+    if (!scheduledIds.size) return { ok: false, reason: "not-scheduled" };
+
+    // Verify that Android actually retained at least one pending reminder.
     try {
       const pending = await LocalNotifications.getPending();
-      const exists = pending?.notifications?.some(
-        (notification) => notification.id === POCKETRULE_REMINDER_ID
-      );
+      const pendingIds = new Set((pending?.notifications || []).map((notification) => notification.id));
+      const expectedIds = notifications.map((notification) => notification.id);
+      const exists = expectedIds.some((id) => pendingIds.has(id));
       if (!exists) return { ok: false, reason: "not-pending" };
-    } catch {
+    } catch (error) {
       // Scheduling already succeeded; verification is best-effort.
+      console.warn("PocketRule pending-reminder verification failed:", error);
     }
 
     return { ok: true, reason: "scheduled" };
@@ -425,7 +510,7 @@ function firePocketRuleReminder() {
   try { new Notification(POCKETRULE_REMINDER_TITLE, { body: POCKETRULE_REMINDER_BODY, tag: "pocketrule-reminder" }); } catch {}
 }
 
-const APP_VERSION = "1.18.16";
+const APP_VERSION = "1.18.18";
 const STORAGE_KEY = "pocketrule-state-v1";
 const ENCRYPTED_STORAGE_KEY = "pocketrule-state-v1-encrypted";
 const SECURITY_META_KEY = "pocketrule-security-meta-v1";
@@ -1427,7 +1512,7 @@ function PinPad({ value, onDigit, onDelete, dark, shake }) {
                 border: "1px solid var(--pr-pin-line)",
                 background: "var(--pr-pin-key-bg)",
                 boxShadow: "var(--pr-pin-key-shadow)",
-                color: "var(--pr-pin-ink)",
+                color: var(--pr-pin-ink),
                 fontFamily: '"Roboto", sans-serif', fontSize: k === "del" ? 20 : 28,
                 fontWeight: 700, fontVariantNumeric: "tabular-nums", fontFeatureSettings: '"tnum" 1', letterSpacing: k === "0" ? "0.04em" : "0",
                 display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
@@ -2114,8 +2199,8 @@ function SpendSheet({ category, currency, transactions = [], onClose, onAdd, onE
 
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 7, borderBottom: "1px dashed rgba(255,255,255,0.45)", paddingBottom: 6, marginTop: 4 }}>
-            <span style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 31, lineHeight: 1.05 }}>{currencySymbol(currency)}</span>
-            <input autoFocus inputMode="numeric" value={amount ? Number(String(amount).replace(/[^0-9]/g, "")).toLocaleString("en-US") : ""} onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))} placeholder="0" className="pr-amount-input pr-spending-amount-input" style={{ width: "100%", border: "none", outline: "none", background: "transparent", color: "#fff", fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 31, lineHeight: 1.05 }} />
+            <span style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 25 }}>{currencySymbol(currency)}</span>
+            <input autoFocus inputMode="numeric" value={amount ? Number(String(amount).replace(/[^0-9]/g, "")).toLocaleString("en-US") : ""} onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))} placeholder="0" style={{ width: "100%", border: "none", outline: "none", background: "transparent", color: "#fff", fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 31, lineHeight: 1.05 }} />
           </div>
         </div>
 
@@ -4548,8 +4633,30 @@ function PocketRuleAppInner() {
     };
 
     if (isNativeApp()) {
-      schedulePocketRuleReminder(data.settings.notificationsEnabled ? reminder : { frequency: "off" });
-      return undefined;
+      let cancelled = false;
+      const rescheduleNativeReminder = async () => {
+        if (cancelled) return;
+        const result = await schedulePocketRuleReminder(
+          data.settings.notificationsEnabled ? reminder : { frequency: "off" },
+          { openSettingsIfNeeded: false },
+        );
+        if (!result.ok && result.reason !== "off" && !cancelled) {
+          console.warn("PocketRule reminder was not scheduled:", result.reason);
+        }
+      };
+
+      // Android can delete exact alarms when the user changes Alarms & reminders
+      // access. Reconcile the saved reminder whenever the app becomes visible.
+      rescheduleNativeReminder();
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === "visible") rescheduleNativeReminder();
+      };
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+
+      return () => {
+        cancelled = true;
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      };
     }
 
     if (!data.settings.notificationsEnabled) return undefined;
@@ -4695,27 +4802,6 @@ function PocketRuleAppInner() {
     return String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
   }
 
-  // Resolve the one active plan associated with a rule without relying on a
-  // single potentially stale activePlanId pointer. Prefer the pointer when it
-  // is valid, then fall back to the newest active plan for the rule. This makes
-  // edits resilient to legacy data whose pointer/history relationship is stale.
-  function findActivePlanForRule(state, ruleId) {
-    const plans = Array.isArray(state.plans) ? state.plans : [];
-    const targetRuleId = String(ruleId || "");
-    const pointed = plans.find((p) =>
-      p && p.status === "active" &&
-      String(p.id) === String(state.activePlanId || "") &&
-      String(p.ruleId) === targetRuleId
-    );
-    if (pointed) return pointed;
-
-    const candidates = plans
-      .filter((p) => p && p.status === "active" && String(p.ruleId) === targetRuleId)
-      .sort((a, b) => (Number(b.date) || 0) - (Number(a.date) || 0));
-
-    return candidates[0] || null;
-  }
-
   function saveRule(rule) {
     setData((d) => {
       if (rule.id) {
@@ -4745,7 +4831,9 @@ function PocketRuleAppInner() {
 
         // If this rule is the rule behind the current active plan, edit that plan
         // in place. Never create a new plan just because the rule was edited.
-        const activePlan = findActivePlanForRule(d, rule.id);
+        const activePlan = d.activePlanId
+          ? plans.find((p) => String(p.id) === String(d.activePlanId) && p.status === "active" && String(p.ruleId) === String(rule.id))
+          : null;
 
         if (activePlan) {
           const oldCategories = Array.isArray(activePlan.categories) ? activePlan.categories : [];
@@ -4855,10 +4943,9 @@ function PocketRuleAppInner() {
 
     setData((d) => {
       let plans = [...(d.plans || [])];
-      const linkedExisting = findActivePlanForRule(d, rule.id);
-      let activePlanId = linkedExisting?.id || d.activePlanId;
-      const existing = linkedExisting || (activePlanId ? plans.find((p) => p.id === activePlanId && p.status === "active") : null);
-      const sameExisting = existing && String(existing.ruleId) === String(rule.id) && Number(existing.income) === incomeNum;
+      let activePlanId = d.activePlanId;
+      const existing = activePlanId ? plans.find((p) => p.id === activePlanId && p.status === "active") : null;
+      const sameExisting = existing && existing.ruleId === rule.id && existing.income === incomeNum;
       let name = existing?.name || String(finalPlanName || "").trim();
       let createdNewPlan = false;
 
@@ -4878,15 +4965,10 @@ function PocketRuleAppInner() {
         createdNewPlan = true;
       }
 
-      const linkedHistory = existing
-        ? d.history.find((h) => String(h.planId || "") === String(existing.id))
-        : null;
-      const existingHistoryId = existing?.historyId || linkedHistory?.id;
+      const existingHistoryId = existing?.historyId;
       const finalEntry = {
         id: existingHistoryId || uid("h"),
-        date: existingHistoryId
-          ? (d.history.find((h) => h.id === existingHistoryId)?.date || Date.now())
-          : Date.now(),
+        date: existingHistoryId ? (d.history.find((h) => h.id === existingHistoryId)?.date || Date.now()) : Date.now(),
         ruleName: name || existing?.name || rule.name,
         income: incomeNum,
         categories: rule.categories,
@@ -4900,7 +4982,7 @@ function PocketRuleAppInner() {
       const history = existingHistoryId
         ? d.history.map((h) => h.id === existingHistoryId ? { ...h, ...finalEntry } : h)
         : [...d.history, finalEntry];
-      if (createdNewPlan || (existing && !existing.historyId && !linkedHistory)) {
+      if (createdNewPlan) {
         plans = plans.map((p) => p.id === activePlanId ? { ...p, historyId: finalEntry.id } : p);
       }
       return { ...d, history, plans, activePlanId, lastPlanName: createdNewPlan ? "" : d.lastPlanName };
@@ -5268,12 +5350,25 @@ function PocketRuleAppInner() {
     }));
     const permission = await requestPocketRuleNotifications();
     const granted = permission === "granted";
-    setData((d) => ({ ...d, settings: { ...d.settings, notificationsEnabled: granted } }));
+    let scheduled = true;
+
     if (granted && reminder.frequency !== "off") {
-      await schedulePocketRuleReminder(reminder, { openSettingsIfNeeded: true });
+      const result = await schedulePocketRuleReminder(reminder, { openSettingsIfNeeded: true });
+      scheduled = result.ok;
+      if (!result.ok) {
+        console.error("PocketRule reminder setup failed:", result.reason);
+      }
     } else {
       await cancelPocketRuleReminder();
     }
+
+    setData((d) => ({
+      ...d,
+      settings: {
+        ...d.settings,
+        notificationsEnabled: granted && scheduled,
+      },
+    }));
     setShowReminderPrompt(false);
   }
 
