@@ -84,9 +84,10 @@ input::placeholder, textarea::placeholder { color: var(--pr-muted); opacity: 1; 
 .pr-money { font-family: "Roboto", sans-serif !important; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; font-weight: 600; letter-spacing: -0.01em; }
 .pr-number { font-family: "Roboto", sans-serif !important; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; font-weight: 500; letter-spacing: -0.015em; }
 select option { color: var(--pr-ink); background: var(--pr-paper-dim); }
-.pr-amount-input { color: #fff !important; font-family: "Roboto", sans-serif !important; background: transparent !important; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+.pr-amount-input { color: var(--pr-ink) !important; font-family: "Roboto", sans-serif !important; background: transparent !important; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
 .pr-amount-input::placeholder { color: transparent; }
-.pr-amount-input { caret-color: #FFFFFF !important; }
+.pr-amount-input { caret-color: var(--pr-ink) !important; }
+.pr-spending-amount-input { color: #FFFFFF !important; caret-color: #FFFFFF !important; }
 button { color: inherit; }
 @keyframes pr-shake { 10%,90%{transform:translateX(-2px);} 20%,80%{transform:translateX(3px);} 30%,50%,70%{transform:translateX(-5px);} 40%,60%{transform:translateX(5px);} }
 .pr-shake { animation: pr-shake 400ms ease; }
@@ -1426,7 +1427,7 @@ function PinPad({ value, onDigit, onDelete, dark, shake }) {
                 border: "1px solid var(--pr-pin-line)",
                 background: "var(--pr-pin-key-bg)",
                 boxShadow: "var(--pr-pin-key-shadow)",
-                color: var(--pr-pin-ink),
+                color: "var(--pr-pin-ink)",
                 fontFamily: '"Roboto", sans-serif', fontSize: k === "del" ? 20 : 28,
                 fontWeight: 700, fontVariantNumeric: "tabular-nums", fontFeatureSettings: '"tnum" 1', letterSpacing: k === "0" ? "0.04em" : "0",
                 display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
@@ -2113,8 +2114,8 @@ function SpendSheet({ category, currency, transactions = [], onClose, onAdd, onE
 
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 7, borderBottom: "1px dashed rgba(255,255,255,0.45)", paddingBottom: 6, marginTop: 4 }}>
-            <span style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 25 }}>{currencySymbol(currency)}</span>
-            <input autoFocus inputMode="numeric" value={amount ? Number(String(amount).replace(/[^0-9]/g, "")).toLocaleString("en-US") : ""} onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))} placeholder="0" style={{ width: "100%", border: "none", outline: "none", background: "transparent", color: "#fff", fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 31, lineHeight: 1.05 }} />
+            <span style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 31, lineHeight: 1.05 }}>{currencySymbol(currency)}</span>
+            <input autoFocus inputMode="numeric" value={amount ? Number(String(amount).replace(/[^0-9]/g, "")).toLocaleString("en-US") : ""} onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))} placeholder="0" className="pr-amount-input pr-spending-amount-input" style={{ width: "100%", border: "none", outline: "none", background: "transparent", color: "#fff", fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 31, lineHeight: 1.05 }} />
           </div>
         </div>
 
@@ -4694,6 +4695,27 @@ function PocketRuleAppInner() {
     return String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
   }
 
+  // Resolve the one active plan associated with a rule without relying on a
+  // single potentially stale activePlanId pointer. Prefer the pointer when it
+  // is valid, then fall back to the newest active plan for the rule. This makes
+  // edits resilient to legacy data whose pointer/history relationship is stale.
+  function findActivePlanForRule(state, ruleId) {
+    const plans = Array.isArray(state.plans) ? state.plans : [];
+    const targetRuleId = String(ruleId || "");
+    const pointed = plans.find((p) =>
+      p && p.status === "active" &&
+      String(p.id) === String(state.activePlanId || "") &&
+      String(p.ruleId) === targetRuleId
+    );
+    if (pointed) return pointed;
+
+    const candidates = plans
+      .filter((p) => p && p.status === "active" && String(p.ruleId) === targetRuleId)
+      .sort((a, b) => (Number(b.date) || 0) - (Number(a.date) || 0));
+
+    return candidates[0] || null;
+  }
+
   function saveRule(rule) {
     setData((d) => {
       if (rule.id) {
@@ -4723,9 +4745,7 @@ function PocketRuleAppInner() {
 
         // If this rule is the rule behind the current active plan, edit that plan
         // in place. Never create a new plan just because the rule was edited.
-        const activePlan = d.activePlanId
-          ? plans.find((p) => String(p.id) === String(d.activePlanId) && p.status === "active" && String(p.ruleId) === String(rule.id))
-          : null;
+        const activePlan = findActivePlanForRule(d, rule.id);
 
         if (activePlan) {
           const oldCategories = Array.isArray(activePlan.categories) ? activePlan.categories : [];
@@ -4835,9 +4855,10 @@ function PocketRuleAppInner() {
 
     setData((d) => {
       let plans = [...(d.plans || [])];
-      let activePlanId = d.activePlanId;
-      const existing = activePlanId ? plans.find((p) => p.id === activePlanId && p.status === "active") : null;
-      const sameExisting = existing && existing.ruleId === rule.id && existing.income === incomeNum;
+      const linkedExisting = findActivePlanForRule(d, rule.id);
+      let activePlanId = linkedExisting?.id || d.activePlanId;
+      const existing = linkedExisting || (activePlanId ? plans.find((p) => p.id === activePlanId && p.status === "active") : null);
+      const sameExisting = existing && String(existing.ruleId) === String(rule.id) && Number(existing.income) === incomeNum;
       let name = existing?.name || String(finalPlanName || "").trim();
       let createdNewPlan = false;
 
@@ -4857,10 +4878,15 @@ function PocketRuleAppInner() {
         createdNewPlan = true;
       }
 
-      const existingHistoryId = existing?.historyId;
+      const linkedHistory = existing
+        ? d.history.find((h) => String(h.planId || "") === String(existing.id))
+        : null;
+      const existingHistoryId = existing?.historyId || linkedHistory?.id;
       const finalEntry = {
         id: existingHistoryId || uid("h"),
-        date: existingHistoryId ? (d.history.find((h) => h.id === existingHistoryId)?.date || Date.now()) : Date.now(),
+        date: existingHistoryId
+          ? (d.history.find((h) => h.id === existingHistoryId)?.date || Date.now())
+          : Date.now(),
         ruleName: name || existing?.name || rule.name,
         income: incomeNum,
         categories: rule.categories,
@@ -4874,7 +4900,7 @@ function PocketRuleAppInner() {
       const history = existingHistoryId
         ? d.history.map((h) => h.id === existingHistoryId ? { ...h, ...finalEntry } : h)
         : [...d.history, finalEntry];
-      if (createdNewPlan) {
+      if (createdNewPlan || (existing && !existing.historyId && !linkedHistory)) {
         plans = plans.map((p) => p.id === activePlanId ? { ...p, historyId: finalEntry.id } : p);
       }
       return { ...d, history, plans, activePlanId, lastPlanName: createdNewPlan ? "" : d.lastPlanName };

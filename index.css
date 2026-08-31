@@ -146,8 +146,7 @@ button {
 
 
 /* =========================================================
-   POCKETRULE v1.18.10 — PIN + AMOUNT INPUT POLISH
-   Scoped fixes only. Does not alter navigation behavior.
+   POCKETRULE v1.18.16 — PIN + AMOUNT INPUT POLISH
 ========================================================= */
 
 .pr-amount-input {
@@ -158,6 +157,12 @@ button {
   letter-spacing: -0.04em !important;
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
+}
+
+/* Spending is entered on the green card, so its amount remains white. */
+.pr-spending-amount-input {
+  color: #FFFFFF !important;
+  caret-color: #FFFFFF !important;
 }
 
 .pr-pin-pad button {
