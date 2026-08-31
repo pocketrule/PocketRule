@@ -1422,7 +1422,7 @@ function PinPad({ value, onDigit, onDelete, dark, shake }) {
               style={{
                 width: "100%", height: 66, borderRadius: 15,
                 border: "1px solid var(--pr-pin-line)",
-                background: var(--pr-pin-key-bg)
+                background: "var(--pr-pin-key-bg)",
                 boxShadow: "var(--pr-pin-key-shadow)",
                 color: var(--pr-pin-ink),
                 fontFamily: '"Roboto", sans-serif', fontSize: k === "del" ? 20 : 28,
