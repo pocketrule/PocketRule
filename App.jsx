@@ -424,7 +424,7 @@ function firePocketRuleReminder() {
   try { new Notification(POCKETRULE_REMINDER_TITLE, { body: POCKETRULE_REMINDER_BODY, tag: "pocketrule-reminder" }); } catch {}
 }
 
-const APP_VERSION = "1.18.14";
+const APP_VERSION = "1.18.15";
 const STORAGE_KEY = "pocketrule-state-v1";
 const ENCRYPTED_STORAGE_KEY = "pocketrule-state-v1-encrypted";
 const SECURITY_META_KEY = "pocketrule-security-meta-v1";
@@ -774,7 +774,7 @@ function normalizeSettings(rawSettings, baseSettings) {
   const rawPin = s.pin;
   let pin = null;
 
-  if (typeof rawPin === "string" && /^\\d{4}$/.test(rawPin)) {
+  if (typeof rawPin === "string" && /^\d{4}$/.test(rawPin)) {
     pin = rawPin;
   } else if (
     rawPin &&
@@ -1397,15 +1397,16 @@ function PinPad({ value, onDigit, onDelete, dark, shake }) {
   const pinBg = dark ? "#17221C" : "#F5F7F3";
   const pinCardBg = dark ? "#111A15" : "#FFFFFF";
   const pinShadow = dark ? "0 8px 24px rgba(0,0,0,0.28)" : "0 8px 24px rgba(18,24,27,0.10)";
+  const pinThemeClass = dark ? "pr-pin-pad-dark" : "pr-pin-pad-light";
   return (
-    <div className={shake ? "pr-pin-pad pr-shake" : "pr-pin-pad"} style={{ width: "100%", background: pinCardBg, border: `1px solid ${pinLine}`, borderRadius: 22, padding: "16px 12px 12px", boxShadow: pinShadow }}>
+    <div className={`${shake ? "pr-pin-pad pr-shake" : "pr-pin-pad"} ${pinThemeClass}`} style={{ width: "100%", borderRadius: 22, padding: "16px 12px 12px", boxShadow: pinShadow }}>
       <div style={{ display: "flex", justifyContent: "center", gap: 12, marginBottom: 26 }}>
         {[0,1,2,3].map((i) => (
           <div key={i} style={{
             width: 13, height: 13, borderRadius: "50%",
-            border: `2px solid ${value.length > i ? pinInk : (dark ? "rgba(244,247,242,0.28)" : "rgba(18,24,27,0.22)")}`,
-            background: value.length > i ? pinInk : "transparent",
-            boxShadow: value.length > i ? (dark ? "0 0 8px rgba(244,247,242,0.16)" : "0 0 8px rgba(18,24,27,0.12)") : "none",
+            border: `2px solid ${value.length > i ? "currentColor" : "var(--pr-pin-dot-empty)"}`,
+            background: value.length > i ? "currentColor" : "transparent",
+            boxShadow: value.length > i ? "0 0 8px var(--pr-pin-dot-glow)" : "none",
             transition: "all 150ms ease",
           }} />
         ))}
@@ -1420,10 +1421,10 @@ function PinPad({ value, onDigit, onDelete, dark, shake }) {
               onClick={() => (k === "del" ? onDelete() : onDigit(k))}
               style={{
                 width: "100%", height: 66, borderRadius: 15,
-                border: `1px solid ${pinLine}`,
-                background: pinBg,
-                boxShadow: dark ? "0 2px 8px rgba(0,0,0,0.24)" : "0 2px 8px rgba(18,24,27,0.08)",
-                color: pinInk,
+                border: "1px solid var(--pr-pin-line)",
+                background: var(--pr-pin-key-bg)
+                boxShadow: "var(--pr-pin-key-shadow)",
+                color: var(--pr-pin-ink),
                 fontFamily: '"Roboto", sans-serif', fontSize: k === "del" ? 20 : 28,
                 fontWeight: 700, fontVariantNumeric: "tabular-nums", fontFeatureSettings: '"tnum" 1', letterSpacing: k === "0" ? "0.04em" : "0",
                 display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
@@ -3418,7 +3419,7 @@ function ReminderPicker({ reminder, setReminder }) {
   );
 }
 
-function SettingsScreen({ settings, onChange, onPinCreated, onLockNow, onReset, onAddCurrency, onExportBackup, onImportBackup, onRequestCurrencyChange, isDark }) {
+function SettingsScreen({ settings, onChange, onPinCreated, onDisablePin, onLockNow, onReset, onAddCurrency, onExportBackup, onImportBackup, onRequestCurrencyChange, isDark }) {
   const [pinStep, setPinStep] = useState(null);
   const [reminderError, setReminderError] = useState("");
   const [firstPin, setFirstPin] = useState("");
@@ -3596,7 +3597,13 @@ function SettingsScreen({ settings, onChange, onPinCreated, onLockNow, onReset, 
                 </div>
                 <Switch
                   on={!!settings.pin}
-                  onToggle={() => (settings.pin ? onChange({ ...settings, pin: null }) : startPinSetup())}
+                  onToggle={async () => {
+                    if (settings.pin) {
+                      await onDisablePin?.();
+                    } else {
+                      startPinSetup();
+                    }
+                  }}
                 />
               </div>
 
@@ -4501,6 +4508,7 @@ class PocketRuleErrorBoundary extends Component {
 function PocketRuleAppInner() {
   const [loaded, setLoaded] = useState(false);
   const [sessionPin, setSessionPin] = useState(null);
+  const storageGenerationRef = useRef(0);
   const lastActivityRef = useRef(Date.now());
   const [data, setData] = useState(defaultState());
   // onboarded now lives in persisted `data.onboarded`
@@ -4593,23 +4601,32 @@ function PocketRuleAppInner() {
     (async () => {
       try {
         const encrypted = await storageAdapter.get(ENCRYPTED_STORAGE_KEY);
-        if (encrypted) {
-          const metaRaw = await storageAdapter.get(SECURITY_META_KEY);
-          const meta = metaRaw ? JSON.parse(metaRaw) : null;
-          if (meta?.pin) setData((d) => ({ ...d, settings: { ...d.settings, pin: meta.pin } }));
+        const metaRaw = await storageAdapter.get(SECURITY_META_KEY);
+        const meta = metaRaw ? JSON.parse(metaRaw) : null;
+
+        // An encrypted payload is authoritative only when it has a valid PIN
+        // verifier. Older builds could leave an encrypted payload behind after
+        // PIN removal; that stale payload must never force a lock screen.
+        if (encrypted && meta?.pin) {
+          setData((d) => ({ ...d, settings: { ...d.settings, pin: meta.pin } }));
           setIsLocked(true);
+        } else if (encrypted || metaRaw) {
+          await storageAdapter.remove(ENCRYPTED_STORAGE_KEY);
+          await storageAdapter.remove(SECURITY_META_KEY);
         }
-        const raw = await storageAdapter.get(STORAGE_KEY);
-        if (raw) {
-          const parsed = normalizeState(JSON.parse(raw));
-          parsed.settings.customCurrencies.forEach(registerCustomCurrency);
-          setData(parsed);
-          setIncome(parsed.lastIncome || "");
-          // Plan names belong to each plan, not to the global app draft.
-          // Start a fresh name field so a previous plan name is never reused accidentally.
-          setPlanName("");
-          setNotes(parsed.notes || "");
-          if (parsed.settings.pin) setIsLocked(true);
+
+        // Only load the plaintext copy when no active encrypted PIN store exists.
+        if (!(encrypted && meta?.pin)) {
+          const raw = await storageAdapter.get(STORAGE_KEY);
+          if (raw) {
+            const parsed = normalizeState(JSON.parse(raw));
+            parsed.settings.customCurrencies.forEach(registerCustomCurrency);
+            setData(parsed);
+            setIncome(parsed.lastIncome || "");
+            setPlanName("");
+            setNotes(parsed.notes || "");
+            setIsLocked(Boolean(parsed.settings.pin));
+          }
         }
       } catch {
       } finally {
@@ -4620,11 +4637,20 @@ function PocketRuleAppInner() {
 
   useEffect(() => {
     if (!loaded) return;
+    const generation = storageGenerationRef.current;
     (async () => {
       if (sessionPin) {
         const encrypted = await encryptJson(data, sessionPin);
-        if (encrypted) { await storageAdapter.set(ENCRYPTED_STORAGE_KEY, encrypted); await storageAdapter.set(SECURITY_META_KEY, JSON.stringify({ pin: data.settings.pin })); await storageAdapter.remove(STORAGE_KEY); }
+        // Do not let an in-flight encrypted write resurrect PIN storage after
+        // the user has disabled the PIN.
+        if (generation !== storageGenerationRef.current) return;
+        if (encrypted) {
+          await storageAdapter.set(ENCRYPTED_STORAGE_KEY, encrypted);
+          await storageAdapter.set(SECURITY_META_KEY, JSON.stringify({ pin: data.settings.pin }));
+          await storageAdapter.remove(STORAGE_KEY);
+        }
       } else if (!data.settings.pin) {
+        if (generation !== storageGenerationRef.current) return;
         await storageAdapter.set(STORAGE_KEY, JSON.stringify(data));
       }
     })();
@@ -5051,6 +5077,25 @@ function PocketRuleAppInner() {
     }
   }
 
+  async function disablePinLock() {
+    // Invalidate any encrypted write that may still be in flight.
+    storageGenerationRef.current += 1;
+    setSessionPin(null);
+    setIsLocked(false);
+
+    const nextData = {
+      ...data,
+      settings: { ...data.settings, pin: null },
+    };
+
+    // Remove the encrypted store and its PIN metadata before writing the
+    // plaintext state. This makes PIN removal persistent across app restarts.
+    await storageAdapter.remove(ENCRYPTED_STORAGE_KEY);
+    await storageAdapter.remove(SECURITY_META_KEY);
+    await storageAdapter.set(STORAGE_KEY, JSON.stringify(nextData));
+    setData(nextData);
+  }
+
   function resetApp() {
     setData(defaultState());
     setIncome("");
@@ -5312,7 +5357,7 @@ function PocketRuleAppInner() {
               onSave={saveRule}
             />
           ) : screen === "settings" ? (
-            <SettingsScreen settings={data.settings} onChange={updateSettings} onPinCreated={(pin) => setSessionPin(pin)} onLockNow={() => { setSessionPin(null); setIsLocked(true); }} onReset={resetApp} onAddCurrency={addCustomCurrency} onExportBackup={exportBackup} onImportBackup={importBackup} onRequestCurrencyChange={requestCurrencyChange} isDark={isDark} />
+            <SettingsScreen settings={data.settings} onChange={updateSettings} onPinCreated={(pin) => setSessionPin(pin)} onDisablePin={disablePinLock} onLockNow={() => { setSessionPin(null); setIsLocked(true); }} onReset={resetApp} onAddCurrency={addCustomCurrency} onExportBackup={exportBackup} onImportBackup={importBackup} onRequestCurrencyChange={requestCurrencyChange} isDark={isDark} />
           ) : screen === "history" ? (
             <HistoryScreen
               history={data.history}
