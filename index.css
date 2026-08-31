@@ -25,10 +25,9 @@ body {
 }
 
 /* =========================================================
-   POCKETRULE READABILITY PASS
-   Typography only.
-   No navigation, calculations, state, AdMob, or interaction
-   behavior is changed.
+   POCKETRULE READABILITY + LAYOUT PASS
+   Typography remains readable without overriding key
+   financial figures or compressing the navigation.
 ========================================================= */
 
 body {
@@ -62,7 +61,7 @@ label {
   font-size: 14px !important;
 }
 
-/* Buttons */
+/* Buttons outside the bottom navigation */
 button {
   font-size: 15px !important;
 }
@@ -74,7 +73,7 @@ select {
   font-size: 16px !important;
 }
 
-/* Raise only the smaller inline text tiers used throughout cards. */
+/* Raise only smaller inline text tiers used throughout cards. */
 [style*="font-size: 12px"],
 [style*="font-size: 12.5px"],
 [style*="font-size: 13px"],
@@ -91,13 +90,13 @@ select {
   line-height: 1.4 !important;
 }
 
-/* Bottom navigation labels */
-nav button,
-nav button span {
-  font-size: 15px !important;
+/* The main Home/Plan remaining figure must keep its prominent size. */
+.pr-hero-remaining {
+  font-size: 44px !important;
+  line-height: 1.05 !important;
 }
 
-/* Preserve clear tabular alignment for financial figures. */
+/* Keep financial figures tabular and readable. */
 .pr-money,
 .pr-number,
 .pr-amount-input,
@@ -106,7 +105,36 @@ input[inputmode="numeric"] {
   font-feature-settings: "tnum" 1;
 }
 
-/* Prevent horizontal overflow caused by larger readable text. */
+/* Bottom navigation is deliberately scoped so readability rules do not
+force 15–16px labels into five narrow columns. */
+.pr-bottom-nav {
+  flex-shrink: 0;
+}
+
+.pr-bottom-nav button {
+  font-size: 11.5px !important;
+  line-height: 1.15 !important;
+  min-width: 0 !important;
+}
+
+.pr-bottom-nav .pr-nav-label {
+  display: block;
+  width: 100%;
+  font-size: 11.5px !important;
+  line-height: 1.15 !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+/* Give the scroll area a small breathing space above the navigation. */
+.pr-app-content {
+  min-height: 0;
+  padding-bottom: 12px;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Prevent horizontal overflow caused by readable text. */
 p,
 h1,
 h2,
@@ -115,3 +143,151 @@ label,
 button {
   overflow-wrap: break-word;
 }
+
+
+/* =========================================================
+   POCKETRULE v1.18.10 — PIN + AMOUNT INPUT POLISH
+   Scoped fixes only. Does not alter navigation behavior.
+========================================================= */
+
+.pr-amount-input {
+  font-family: "Roboto", sans-serif !important;
+  font-size: 31px !important;
+  line-height: 1 !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.04em !important;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.pr-pin-pad button {
+  font-family: "Roboto", sans-serif !important;
+  font-size: 28px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.pr-pin-pad button svg {
+  width: 21px;
+  height: 21px;
+}
+
+.pr-lock-screen {
+  overflow-y: auto;
+  width: 100%;
+  min-height: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-height: 760px) {
+  .pr-lock-screen {
+    align-items: flex-start !important;
+    padding-top: 10px !important;
+    padding-bottom: 10px !important;
+  }
+
+  .pr-lock-card {
+    padding-top: 18px !important;
+    padding-bottom: 16px !important;
+  }
+
+  .pr-pin-pad {
+    padding-top: 12px !important;
+    padding-bottom: 10px !important;
+  }
+
+  .pr-pin-pad > div:first-child {
+    margin-bottom: 16px !important;
+  }
+
+  .pr-pin-pad > div:last-child {
+    gap: 8px !important;
+  }
+
+  .pr-pin-pad button {
+    height: 62px !important;
+  }
+}
+
+
+
+/* =========================================================
+   PIN THEME — explicit, class-scoped theme contract
+   The PIN keypad must never fall back to the browser/light form theme.
+========================================================= */
+.pr-pin-pad-light {
+  --pr-pin-ink: #12181B;
+  --pr-pin-line: #DDE3DE;
+  --pr-pin-key-bg: #F5F7F3;
+  --pr-pin-dot-empty: rgba(18,24,27,0.22);
+  --pr-pin-dot-glow: rgba(18,24,27,0.12);
+  --pr-pin-key-shadow: 0 2px 8px rgba(18,24,27,0.08);
+  background: #FFFFFF !important;
+  color: #12181B !important;
+  border: 1px solid #DDE3DE !important;
+}
+
+.pr-pin-pad-dark {
+  --pr-pin-ink: #F4F7F2;
+  --pr-pin-line: #314137;
+  --pr-pin-key-bg: #17221C;
+  --pr-pin-dot-empty: rgba(244,247,242,0.28);
+  --pr-pin-dot-glow: rgba(244,247,242,0.16);
+  --pr-pin-key-shadow: 0 2px 8px rgba(0,0,0,0.24);
+  background: #111A15 !important;
+  color: #F4F7F2 !important;
+  border: 1px solid #314137 !important;
+}
+
+.pr-pin-pad-light button,
+.pr-pin-pad-dark button {
+  background: var(--pr-pin-key-bg) !important;
+  color: var(--pr-pin-ink) !important;
+  border: 1px solid var(--pr-pin-line) !important;
+  box-shadow: var(--pr-pin-key-shadow) !important;
+}
+
+.pr-pin-pad-light button:active,
+.pr-pin-pad-dark button:active {
+  background: var(--pr-pin-key-bg) !important;
+}
+
+.pr-pin-pad-dark button:focus-visible {
+  outline-color: rgba(34,197,94,0.75) !important;
+}
+
+/* =========================================================
+   POCKETRULE v1.18.15 — PERMANENT UI SAFETY RULES
+========================================================= */
+.pr-app-shell {
+  width: 100%;
+  min-height: 100dvh;
+}
+
+.pr-bottom-nav {
+  padding-bottom: max(3px, env(safe-area-inset-bottom));
+}
+
+.pr-bottom-nav button {
+  padding-bottom: 5px !important;
+}
+
+.pr-pin-pad {
+  width: 100%;
+}
+
+.pr-lock-screen {
+  width: 100%;
+  min-height: 100%;
+  height: 100%;
+}
+
+.pr-lock-card {
+  width: 100%;
+  min-height: 100%;
+}
+
+/* The app must never draw a fake camera/notch pill. Android owns the
+   actual display cutout; only safe-area insets are used here. */

@@ -1512,7 +1512,7 @@ function PinPad({ value, onDigit, onDelete, dark, shake }) {
                 border: "1px solid var(--pr-pin-line)",
                 background: "var(--pr-pin-key-bg)",
                 boxShadow: "var(--pr-pin-key-shadow)",
-                color: var(--pr-pin-ink),
+                color: "var(--pr-pin-ink)",
                 fontFamily: '"Roboto", sans-serif', fontSize: k === "del" ? 20 : 28,
                 fontWeight: 700, fontVariantNumeric: "tabular-nums", fontFeatureSettings: '"tnum" 1', letterSpacing: k === "0" ? "0.04em" : "0",
                 display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
