@@ -184,6 +184,39 @@ jobs:
 
 
       # ============================================================
+      # 12A. PRESERVE DEVICE COMPATIBILITY
+      # ============================================================
+
+      - name: Configure Android minimum SDK
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("android/variables.gradle")
+          if not path.exists():
+              raise SystemExit("ERROR: android/variables.gradle not found.")
+
+          text = path.read_text()
+
+          # Capacitor 7 supports API 23+. Keep this explicit so a regenerated
+          # Android project cannot silently raise the minimum device API.
+          if re.search(r'\bminSdkVersion\s*=\s*\d+', text):
+              text = re.sub(r'\bminSdkVersion\s*=\s*\d+', 'minSdkVersion = 23', text, count=1)
+          else:
+              ext = re.search(r'\bext\s*\{', text)
+              if not ext:
+                  raise SystemExit("ERROR: ext block not found in variables.gradle.")
+              pos = ext.end()
+              text = text[:pos] + "\n    minSdkVersion = 23" + text[pos:]
+
+          path.write_text(text)
+          print("Android minSdkVersion explicitly set to 23.")
+          PY
+
+      # ============================================================
       # 12. SETUP ANDROID SDK
       # ============================================================
 
@@ -495,6 +528,7 @@ jobs:
           print("================================")
           print("ANDROID 16 CONFIGURED")
           print("================================")
+          print("minSdk: 23")
           print("compileSdk: 36")
           print("targetSdk: 36")
           print("================================")
@@ -555,6 +589,16 @@ jobs:
               "android/app/build.gradle"
           ).read_text()
 
+          variables_text = Path("android/variables.gradle").read_text()
+
+          min_matches = re.findall(
+              r'\bminSdkVersion\s*=\s*(\d+)',
+              variables_text
+          )
+
+          if not min_matches or min_matches[0] != "23":
+              raise SystemExit("ERROR: minSdkVersion is not explicitly 23.")
+
           compile_matches = re.findall(
               r'\bcompileSdk\s+(\d+)',
               text
@@ -590,6 +634,7 @@ jobs:
           print("================================")
           print("ANDROID + ADMOB VERIFIED")
           print("================================")
+          print("minSdk: 23")
           print("compileSdk: 36")
           print("targetSdk: 36")
           print("AD_ID: OK")
@@ -784,8 +829,8 @@ jobs:
           from pathlib import Path
           import re
 
-          VERSION_CODE = 11816
-          VERSION_NAME = "1.18.16"
+          VERSION_CODE = 11818
+          VERSION_NAME = "1.18.18"
 
           path = Path("android/app/build.gradle")
 
@@ -923,8 +968,9 @@ jobs:
           print("================================")
           print("POCKETRULE RELEASE CONFIGURED")
           print("================================")
-          print("Version name: 1.18.16")
-          print("Version code: 11816")
+          print("Version name: 1.18.18")
+          print("Version code: 11818")
+          print("minSdk: 23")
           print("compileSdk: 36")
           print("targetSdk: 36")
           print("Release signing: configured")
@@ -961,7 +1007,7 @@ jobs:
 
           if codes[0] != "11816":
               raise SystemExit(
-                  f"ERROR: Expected versionCode 11816. "
+                  f"ERROR: Expected versionCode 11818. "
                   f"Found {codes[0]}."
               )
 
@@ -978,7 +1024,7 @@ jobs:
 
           if names[0] != "1.18.16":
               raise SystemExit(
-                  f"ERROR: Expected versionName 1.18.16. "
+                  f"ERROR: Expected versionName 1.18.18. "
                   f"Found {names[0]}."
               )
 
@@ -1010,8 +1056,9 @@ jobs:
           print("================================")
           print("ANDROID CONFIGURATION VERIFIED")
           print("================================")
-          print("Version name: 1.18.16")
-          print("Version code: 11816")
+          print("Version name: 1.18.18")
+          print("Version code: 11818")
+          print("minSdk: 23")
           print("compileSdk: 36")
           print("targetSdk: 36")
           print("Release signing: OK")
@@ -1152,7 +1199,7 @@ jobs:
           echo "Artifact URL: $ARTIFACT_URL"
           echo "File: PocketRule-v1.18.16-code11816.aab"
           echo "Version: 1.18.16"
-          echo "Version code: 11816"
+          echo "Version code: 11818"
           echo "compileSdk: 36"
           echo "targetSdk: 36"
           echo "AD_ID permission: CONFIGURED"
