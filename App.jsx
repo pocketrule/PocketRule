@@ -424,7 +424,7 @@ function firePocketRuleReminder() {
   try { new Notification(POCKETRULE_REMINDER_TITLE, { body: POCKETRULE_REMINDER_BODY, tag: "pocketrule-reminder" }); } catch {}
 }
 
-const APP_VERSION = "1.18.15";
+const APP_VERSION = "1.18.16";
 const STORAGE_KEY = "pocketrule-state-v1";
 const ENCRYPTED_STORAGE_KEY = "pocketrule-state-v1-encrypted";
 const SECURITY_META_KEY = "pocketrule-security-meta-v1";
@@ -865,7 +865,9 @@ function normalizeState(raw) {
         categories: Array.isArray(r.categories) && r.categories.length
           ? r.categories
               .filter((c) => c && typeof c === "object" && !Array.isArray(c))
-              .map((c) => ({
+              .map((c, categoryIndex) => ({
+                ...c,
+                id: String(c.id || uid(`c${categoryIndex}`)),
                 name: String(c.name || "Category"),
                 pct: Number.isFinite(Number(c.pct)) ? Number(c.pct) : 0,
               }))
@@ -1424,7 +1426,7 @@ function PinPad({ value, onDigit, onDelete, dark, shake }) {
                 border: "1px solid var(--pr-pin-line)",
                 background: "var(--pr-pin-key-bg)",
                 boxShadow: "var(--pr-pin-key-shadow)",
-                color: "var(--pr-pin-ink)",
+                color: var(--pr-pin-ink),
                 fontFamily: '"Roboto", sans-serif', fontSize: k === "del" ? 20 : 28,
                 fontWeight: 700, fontVariantNumeric: "tabular-nums", fontFeatureSettings: '"tnum" 1', letterSpacing: k === "0" ? "0.04em" : "0",
                 display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
@@ -2877,7 +2879,7 @@ function RuleEditor({ initial, onCancel, onSave, firstRun }) {
           <PrimaryButton
             icon={Check}
             disabled={total !== 100 || !name.trim() || hasDuplicateNames}
-            onClick={() => onSave({ id: initial.id, name: name.trim(), emoji, categories: categories.map(({ name, pct }) => ({ name: name.trim().replace(/\s+/g, " "), pct: Number(pct) || 0 })) })}
+            onClick={() => onSave({ id: initial.id, name: name.trim(), emoji, categories: categories.map(({ id, name, pct }) => ({ id, name: name.trim().replace(/\s+/g, " "), pct: Number(pct) || 0 })) })}
           >
             {firstRun ? "Save & Continue" : "Save Rule"}
           </PrimaryButton>
@@ -4688,12 +4690,99 @@ function PocketRuleAppInner() {
     updateSettings({ ...data.settings, currency: pendingCurrency });
     setPendingCurrency(null);
   }
+  function normalizeCategoryNameForMatch(name) {
+    return String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
+  }
+
   function saveRule(rule) {
     setData((d) => {
       if (rule.id) {
-        return { ...d, rules: d.rules.map((r) => (r.id === rule.id ? { ...r, ...rule } : r)) };
+        const currentRule = d.rules.find((r) => String(r.id) === String(rule.id));
+        if (!currentRule) return d;
+
+        // Preserve stable category IDs across rule edits. This is critical because
+        // plan transactions point to plan-category IDs. A rule edit must update
+        // the existing plan rather than silently creating a second plan/ledger.
+        const incomingCategories = Array.isArray(rule.categories) ? rule.categories : [];
+        const currentCategories = Array.isArray(currentRule.categories) ? currentRule.categories : [];
+        const usedCategoryIds = new Set();
+        const categories = incomingCategories.map((c, index) => {
+          const incomingId = String(c?.id || "");
+          const incomingName = normalizeCategoryNameForMatch(c?.name);
+          const byId = incomingId ? currentCategories.find((x) => String(x?.id || "") === incomingId) : null;
+          const byName = currentCategories.find((x) => normalizeCategoryNameForMatch(x?.name) === incomingName);
+          let id = String(byId?.id || byName?.id || incomingId || uid("c"));
+          if (usedCategoryIds.has(id)) id = uid("c");
+          usedCategoryIds.add(id);
+          return { ...c, id, name: String(c?.name || "").trim().replace(/\s+/g, " "), pct: Number(c?.pct) || 0 };
+        });
+
+        const updatedRule = { ...currentRule, ...rule, id: currentRule.id, categories };
+        let plans = Array.isArray(d.plans) ? d.plans : [];
+        let history = Array.isArray(d.history) ? d.history : [];
+
+        // If this rule is the rule behind the current active plan, edit that plan
+        // in place. Never create a new plan just because the rule was edited.
+        const activePlan = d.activePlanId
+          ? plans.find((p) => String(p.id) === String(d.activePlanId) && p.status === "active" && String(p.ruleId) === String(rule.id))
+          : null;
+
+        if (activePlan) {
+          const oldCategories = Array.isArray(activePlan.categories) ? activePlan.categories : [];
+          const byPlanId = new Map(oldCategories.map((c) => [String(c.id), c]));
+          const byPlanName = new Map(oldCategories.map((c) => [normalizeCategoryNameForMatch(c.name), c]));
+          const allocated = calculateCategories(activePlan.income, categories);
+          const planCategories = allocated.map((a) => {
+            const source = byPlanId.get(String(a.c?.id || "")) || byPlanName.get(normalizeCategoryNameForMatch(a.c?.name));
+            return {
+              id: String(source?.id || uid("pc")),
+              name: a.c.name,
+              pct: a.c.pct,
+              budget: a.amount,
+              spent: Math.max(0, Number(source?.spent) || 0),
+            };
+          });
+
+          const updatedPlan = reconcilePlanSpending({
+            ...activePlan,
+            ruleId: updatedRule.id,
+            ruleName: updatedRule.name,
+            categories: planCategories,
+          }, true);
+
+          plans = plans.map((p) => p.id === activePlan.id ? updatedPlan : p);
+          history = history.map((h) => {
+            if (String(h.planId) !== String(activePlan.id) && String(h.id) !== String(activePlan.historyId || "")) return h;
+            return {
+              ...h,
+              ruleName: updatedRule.name,
+              income: Number(activePlan.income) || 0,
+              categories: updatedRule.categories.map((c) => ({ name: c.name, pct: c.pct })),
+              planId: activePlan.id,
+            };
+          });
+        }
+
+        return {
+          ...d,
+          rules: d.rules.map((r) => (String(r.id) === String(rule.id) ? updatedRule : r)),
+          plans,
+          history,
+        };
       }
-      const newRule = { ...rule, id: uid("rule"), createdAt: Date.now(), lastUsedAt: Date.now() };
+
+      const newRule = {
+        ...rule,
+        id: uid("rule"),
+        createdAt: Date.now(),
+        lastUsedAt: Date.now(),
+        categories: (rule.categories || []).map((c) => ({
+          ...c,
+          id: String(c?.id || uid("c")),
+          name: String(c?.name || "").trim().replace(/\s+/g, " "),
+          pct: Number(c?.pct) || 0,
+        })),
+      };
       return { ...d, rules: [...d.rules, newRule], activeRuleId: newRule.id };
     });
     setEditingRuleId(undefined);
