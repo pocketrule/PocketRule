@@ -405,101 +405,58 @@ jobs:
           from pathlib import Path
           import re
 
-          path = Path("android/app/build.gradle")
-
-          if not path.exists():
-              raise SystemExit(
-                  "ERROR: android/app/build.gradle not found."
-              )
-
-          text = path.read_text()
-
-          compile_patterns = [
-              r'\bcompileSdkVersion\s+\d+',
-              r'\bcompileSdk\s*=\s*\d+',
-              r'\bcompileSdk\s+\d+'
+          # Capacitor 7 keeps the default SDK versions in variables.gradle.
+          # Force BOTH the root variables and app module so Play sees target 36.
+          files = [
+              Path("android/variables.gradle"),
+              Path("android/app/build.gradle"),
           ]
 
-          replaced_compile = False
+          for path in files:
+              if not path.exists():
+                  continue
+              text = path.read_text()
 
-          for pattern in compile_patterns:
-              if re.search(pattern, text):
-                  text = re.sub(
-                      pattern,
-                      'compileSdk 36',
-                      text,
-                      count=1
-                  )
-                  replaced_compile = True
-                  break
+              # Handle common Groovy forms.
+              text = re.sub(r'\bcompileSdkVersion\s+\d+', 'compileSdkVersion 36', text)
+              text = re.sub(r'\bcompileSdk\s*=\s*\d+', 'compileSdk = 36', text)
+              text = re.sub(r'\bcompileSdk\s+\d+', 'compileSdk 36', text)
+              text = re.sub(r'\btargetSdkVersion\s+\d+', 'targetSdkVersion 36', text)
+              text = re.sub(r'\btargetSdk\s*=\s*\d+', 'targetSdk = 36', text)
+              text = re.sub(r'\btargetSdk\s+\d+', 'targetSdk 36', text)
 
-          if not replaced_compile:
-              android_match = re.search(
-                  r'\bandroid\s*\{',
-                  text
-              )
+              path.write_text(text)
 
-              if not android_match:
-                  raise SystemExit(
-                      "ERROR: android block not found."
-                  )
+          # Ensure variables.gradle has explicit values even if its template
+          # uses a different form or omitted them.
+          variables = Path("android/variables.gradle")
+          if variables.exists():
+              text = variables.read_text()
+              if not re.search(r'\bcompileSdk(?:Version)?\s*(?:=)?\s*36\b', text):
+                  text = re.sub(r'(compileSdkVersion\s*=\s*)\d+', r'\g<1>36', text)
+              if not re.search(r'\btargetSdk(?:Version)?\s*(?:=)?\s*36\b', text):
+                  text = re.sub(r'(targetSdkVersion\s*=\s*)\d+', r'\g<1>36', text)
+              variables.write_text(text)
 
-              position = android_match.end()
+          # Finally force the app module's android block/defaultConfig.
+          app = Path("android/app/build.gradle")
+          text = app.read_text()
+          if not re.search(r'\bcompileSdk(?:Version)?\s*(?:=)?\s*36\b', text):
+              m = re.search(r'\bandroid\s*\{', text)
+              if not m:
+                  raise SystemExit("ERROR: android block not found.")
+              text = text[:m.end()] + "\n    compileSdk 36" + text[m.end():]
+          if not re.search(r'\btargetSdk(?:Version)?\s*(?:=)?\s*36\b', text):
+              m = re.search(r'\bdefaultConfig\s*\{', text)
+              if not m:
+                  raise SystemExit("ERROR: defaultConfig block not found.")
+              text = text[:m.end()] + "\n        targetSdk 36" + text[m.end():]
+          app.write_text(text)
 
-              text = (
-                  text[:position]
-                  + "\n    compileSdk 36"
-                  + text[position:]
-              )
-
-          target_patterns = [
-              r'\btargetSdkVersion\s+\d+',
-              r'\btargetSdk\s*=\s*\d+',
-              r'\btargetSdk\s+\d+'
-          ]
-
-          replaced_target = False
-
-          for pattern in target_patterns:
-              if re.search(pattern, text):
-                  text = re.sub(
-                      pattern,
-                      'targetSdk 36',
-                      text,
-                      count=1
-                  )
-                  replaced_target = True
-                  break
-
-          if not replaced_target:
-              default_config_match = re.search(
-                  r'\bdefaultConfig\s*\{',
-                  text
-              )
-
-              if not default_config_match:
-                  raise SystemExit(
-                      "ERROR: defaultConfig block not found."
-                  )
-
-              position = default_config_match.end()
-
-              text = (
-                  text[:position]
-                  + "\n        targetSdk 36"
-                  + text[position:]
-              )
-
-          path.write_text(text)
-
-          print("================================")
-          print("ANDROID 16 CONFIGURED")
-          print("================================")
-          print("compileSdk: 36")
-          print("targetSdk: 36")
-          print("================================")
+          print("Android compileSdk = 36")
+          print("Android targetSdk = 36")
+          print("Android API 36 configuration applied to variables.gradle and app/build.gradle")
           PY
-
 
       # ============================================================
       # 17. VERIFY ADMOB + ANDROID 16
@@ -551,9 +508,9 @@ jobs:
           from pathlib import Path
           import re
 
-          text = Path(
-              "android/app/build.gradle"
-          ).read_text()
+          app_text = Path("android/app/build.gradle").read_text()
+          variables_text = Path("android/variables.gradle").read_text() if Path("android/variables.gradle").exists() else ""
+          text = app_text
 
           compile_matches = re.findall(
               r'\bcompileSdk\s+(\d+)',
@@ -586,6 +543,12 @@ jobs:
                   f"ERROR: targetSdk is "
                   f"{target_matches[0]}, expected 36."
               )
+
+          if variables_text:
+              if not re.search(r'\bcompileSdk(?:Version)?\s*(?:=)?\s*36\b', variables_text):
+                  raise SystemExit("ERROR: variables.gradle compile SDK is not 36.")
+              if not re.search(r'\btargetSdk(?:Version)?\s*(?:=)?\s*36\b', variables_text):
+                  raise SystemExit("ERROR: variables.gradle target SDK is not 36.")
 
           print("================================")
           print("ANDROID + ADMOB VERIFIED")
@@ -784,8 +747,8 @@ jobs:
           from pathlib import Path
           import re
 
-          VERSION_CODE = 11819
-          VERSION_NAME = "1.18.19"
+          VERSION_CODE = 11820
+          VERSION_NAME = "1.18.20"
 
           path = Path("android/app/build.gradle")
 
@@ -923,8 +886,8 @@ jobs:
           print("================================")
           print("POCKETRULE RELEASE CONFIGURED")
           print("================================")
-          print("Version name: 1.18.19")
-          print("Version code: 11819")
+          print("Version name: 1.18.20")
+          print("Version code: 11820")
           print("compileSdk: 36")
           print("targetSdk: 36")
           print("Release signing: configured")
@@ -959,9 +922,9 @@ jobs:
                   f"Found {len(codes)}."
               )
 
-          if codes[0] != "11819":
+          if codes[0] != "11820":
               raise SystemExit(
-                  f"ERROR: Expected versionCode 11818. "
+                  f"ERROR: Expected versionCode 11820. "
                   f"Found {codes[0]}."
               )
 
@@ -976,9 +939,9 @@ jobs:
                   f"Found {len(names)}."
               )
 
-          if names[0] != "1.18.19":
+          if names[0] != "1.18.20":
               raise SystemExit(
-                  f"ERROR: Expected versionName 1.18.18. "
+                  f"ERROR: Expected versionName 1.18.20. "
                   f"Found {names[0]}."
               )
 
@@ -1010,8 +973,8 @@ jobs:
           print("================================")
           print("ANDROID CONFIGURATION VERIFIED")
           print("================================")
-          print("Version name: 1.18.19")
-          print("Version code: 11819")
+          print("Version name: 1.18.20")
+          print("Version code: 11820")
           print("compileSdk: 36")
           print("targetSdk: 36")
           print("Release signing: OK")
@@ -1051,7 +1014,7 @@ jobs:
           set -euo pipefail
 
           SOURCE_AAB="android/app/build/outputs/bundle/release/app-release.aab"
-          RELEASE_AAB="release/PocketRule-v1.18.19-code11819.aab"
+          RELEASE_AAB="release/PocketRule-v1.18.20-code11820.aab"
 
           if [ ! -f "$SOURCE_AAB" ]; then
             echo "ERROR: AAB was not generated."
@@ -1081,7 +1044,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          FILE="release/PocketRule-v1.18.19-code11819.aab"
+          FILE="release/PocketRule-v1.18.20-code11820.aab"
 
           test -f "$FILE"
           test -s "$FILE"
@@ -1110,7 +1073,7 @@ jobs:
             -verify \
             -verbose \
             -certs \
-            release/PocketRule-v1.18.19-code11819.aab
+            release/PocketRule-v1.18.20-code11820.aab
 
           echo "AAB signature verification passed."
 
@@ -1123,8 +1086,8 @@ jobs:
         id: upload_aab
         uses: actions/upload-artifact@v7
         with:
-          name: PocketRule-AAB-v1.18.19-code11819
-          path: release/PocketRule-v1.18.19-code11819.aab
+          name: PocketRule-AAB-v1.18.20-code11820
+          path: release/PocketRule-v1.18.20-code11820.aab
           if-no-files-found: error
           retention-days: 30
 
@@ -1150,9 +1113,9 @@ jobs:
           echo "================================"
           echo "Artifact ID: $ARTIFACT_ID"
           echo "Artifact URL: $ARTIFACT_URL"
-          echo "File: PocketRule-v1.18.19-code11819.aab"
+          echo "File: PocketRule-v1.18.20-code11820.aab"
           echo "Version: 1.18.18"
-          echo "Version code: 11819"
+          echo "Version code: 11820"
           echo "compileSdk: 36"
           echo "targetSdk: 36"
           echo "AD_ID permission: CONFIGURED"
