@@ -510,7 +510,7 @@ function firePocketRuleReminder() {
   try { new Notification(POCKETRULE_REMINDER_TITLE, { body: POCKETRULE_REMINDER_BODY, tag: "pocketrule-reminder" }); } catch {}
 }
 
-const APP_VERSION = "1.18.18";
+const APP_VERSION = "1.18.19";
 const STORAGE_KEY = "pocketrule-state-v1";
 const ENCRYPTED_STORAGE_KEY = "pocketrule-state-v1-encrypted";
 const SECURITY_META_KEY = "pocketrule-security-meta-v1";
@@ -1512,7 +1512,7 @@ function PinPad({ value, onDigit, onDelete, dark, shake }) {
                 border: "1px solid var(--pr-pin-line)",
                 background: "var(--pr-pin-key-bg)",
                 boxShadow: "var(--pr-pin-key-shadow)",
-                color: "var(--pr-pin-ink)",
+                color: var(--pr-pin-ink),
                 fontFamily: '"Roboto", sans-serif', fontSize: k === "del" ? 20 : 28,
                 fontWeight: 700, fontVariantNumeric: "tabular-nums", fontFeatureSettings: '"tnum" 1', letterSpacing: k === "0" ? "0.04em" : "0",
                 display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
@@ -4148,9 +4148,14 @@ function BottomNav({ active, onNav }) {
   );
 }
 
-function PlansScreen({ plans, currency, onBack, onOpenActive, onOpenCompleted }) {
+function PlansScreen({ plans, currency, onBack, onOpenActive, onOpenCompleted, onInsightsVisibilityChange }) {
   const [period, setPeriod] = useState("week");
   const [showInsights, setShowInsights] = useState(false);
+
+  useEffect(() => {
+    onInsightsVisibilityChange?.(showInsights);
+    return () => onInsightsVisibilityChange?.(false);
+  }, [showInsights, onInsightsVisibilityChange]);
   const todayForInput = new Date();
   const toInputDate = (d) => {
     const year = d.getFullYear();
@@ -4616,6 +4621,7 @@ function PocketRuleAppInner() {
   const [isLocked, setIsLocked] = useState(false);
   const [resourceTarget, setResourceTarget] = useState(null);
   const [resourcePrompt, setResourcePrompt] = useState(null);
+  const [planInsightsOpen, setPlanInsightsOpen] = useState(false);
   const [showPlanNameSheet, setShowPlanNameSheet] = useState(false);
   const [pendingCurrency, setPendingCurrency] = useState(null);
   const [backupModal, setBackupModal] = useState(null);
@@ -4698,14 +4704,23 @@ function PocketRuleAppInner() {
   }, [loaded]);
 
   useEffect(() => {
+    if (screen !== "plan") setPlanInsightsOpen(false);
+  }, [screen]);
+
+  useEffect(() => {
     if (!loaded || !isNativeApp()) return;
-    if (data.onboarded && screen === "resources") {
+    const shouldShowBanner =
+      data.onboarded &&
+      (screen === "resources" || (screen === "plan" && planInsightsOpen));
+
+    if (shouldShowBanner) {
       showPocketRuleBanner();
     } else {
       hidePocketRuleBanner();
     }
+
     return () => { hidePocketRuleBanner(); };
-  }, [loaded, data.onboarded, screen]);
+  }, [loaded, data.onboarded, screen, planInsightsOpen]);
 
   useEffect(() => {
     (async () => {
@@ -5529,6 +5544,7 @@ function PocketRuleAppInner() {
               currency={data.settings.currency}
               onOpenActive={() => setScreen("home")}
               onOpenCompleted={(id) => { setSelectedCompletedPlanId(id); setScreen("completedPlanDetail"); }}
+              onInsightsVisibilityChange={setPlanInsightsOpen}
             />
           ) : screen === "completedPlanDetail" ? (
             <CompletedPlanDetailScreen
