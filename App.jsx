@@ -1,6 +1,7 @@
 import React, { Component, useState, useEffect, useRef } from "react";
 import { Capacitor } from "@capacitor/core";
 import { LocalNotifications } from "@capacitor/local-notifications";
+import { AdMob, AdmobConsentStatus, BannerAdSize, BannerAdPosition, BannerAdPluginEvents } from "@capacitor-community/admob";
 import {
   ArrowRight, ArrowLeft, Check, Eye, EyeOff, Share2, BookmarkPlus, BookmarkCheck, Minus,
   Globe2,
@@ -118,7 +119,140 @@ const CURRENCIES = [
    REMINDERS — MONEY RECEIVED / EXPECTED
 --------------------------------------------------------- */
 const POCKETRULE_REMINDER_ID = 481516;
+const POCKETRULE_MONTHLY_REMINDER_BASE_ID = 481517;
+const POCKETRULE_MONTHLY_REMINDER_COUNT = 12;
+const POCKETRULE_REMINDER_IDS = [
+  POCKETRULE_REMINDER_ID,
+  ...Array.from({ length: POCKETRULE_MONTHLY_REMINDER_COUNT }, (_, index) => POCKETRULE_MONTHLY_REMINDER_BASE_ID + index),
+];
 const POCKETRULE_NOTIFICATION_CHANNEL = "pocketrule-reminders-v2";
+const POCKETRULE_ADMOB_BANNER_ID = import.meta.env.VITE_ADMOB_BANNER_ID || "ca-app-pub-3940256099942544/6300978111";
+const POCKETRULE_ADMOB_TESTING = String(import.meta.env.VITE_ADMOB_TESTING ?? "true").toLowerCase() !== "false";
+const POCKETRULE_ADMOB_ENABLED = String(import.meta.env.VITE_ADMOB_ENABLED ?? "true").toLowerCase() !== "false";
+
+let pocketRuleAdMobInitialized = false;
+let pocketRuleAdMobConsentPromise = null;
+let pocketRuleAdMobListenersReady = false;
+
+async function setupPocketRuleAdMobListeners() {
+  if (!isNativeApp() || pocketRuleAdMobListenersReady) return;
+
+  pocketRuleAdMobListenersReady = true;
+
+  try {
+    await AdMob.addListener(BannerAdPluginEvents.Loaded, (info) => {
+      console.log("PocketRule AdMob banner loaded:", info);
+    });
+
+    await AdMob.addListener(BannerAdPluginEvents.FailedToLoad, (error) => {
+      console.error("PocketRule AdMob banner failed to load:", error);
+    });
+
+    await AdMob.addListener(BannerAdPluginEvents.Opened, () => {
+      console.log("PocketRule AdMob banner opened.");
+    });
+
+    await AdMob.addListener(BannerAdPluginEvents.Closed, () => {
+      console.log("PocketRule AdMob banner closed.");
+    });
+
+    await AdMob.addListener(BannerAdPluginEvents.SizeChanged, (size) => {
+      console.log("PocketRule AdMob banner size changed:", size);
+    });
+  } catch (error) {
+    console.error("PocketRule AdMob listener setup failed:", error);
+  }
+}
+
+async function startPocketRuleAdMob() {
+  if (!isNativeApp() || !POCKETRULE_ADMOB_ENABLED) {
+    console.log("PocketRule AdMob skipped:", {
+      native: isNativeApp(),
+      enabled: POCKETRULE_ADMOB_ENABLED,
+    });
+    return false;
+  }
+
+  try {
+    if (!pocketRuleAdMobInitialized) {
+      await AdMob.initialize({
+        initializeForTesting: POCKETRULE_ADMOB_TESTING,
+      });
+      pocketRuleAdMobInitialized = true;
+      console.log("PocketRule AdMob initialized.");
+    }
+
+    await setupPocketRuleAdMobListeners();
+
+    if (!pocketRuleAdMobConsentPromise) {
+      pocketRuleAdMobConsentPromise = (async () => {
+        let consentInfo = await AdMob.requestConsentInfo();
+
+        console.log("PocketRule AdMob consent info:", consentInfo);
+
+        if (
+          !consentInfo.canRequestAds &&
+          consentInfo.isConsentFormAvailable
+        ) {
+          consentInfo = await AdMob.showConsentForm();
+          console.log("PocketRule AdMob consent result:", consentInfo);
+        }
+
+        if (!consentInfo.canRequestAds) {
+          console.warn(
+            "PocketRule AdMob cannot request ads yet. " +
+            "Consent/status does not currently allow an ad request."
+          );
+        }
+
+        return Boolean(consentInfo.canRequestAds);
+      })();
+    }
+
+    return await pocketRuleAdMobConsentPromise;
+  } catch (error) {
+    console.error("PocketRule AdMob initialization/consent failed:", error);
+    pocketRuleAdMobConsentPromise = null;
+    return false;
+  }
+}
+
+async function showPocketRuleBanner() {
+  if (!isNativeApp()) return;
+
+  const canRequestAds = await startPocketRuleAdMob();
+
+  if (!canRequestAds) {
+    console.warn("PocketRule banner not shown because ads cannot be requested.");
+    return;
+  }
+
+  try {
+    console.log("PocketRule showing AdMob banner:", {
+      adId: POCKETRULE_ADMOB_BANNER_ID,
+      isTesting: POCKETRULE_ADMOB_TESTING,
+    });
+
+    await AdMob.showBanner({
+      adId: POCKETRULE_ADMOB_BANNER_ID,
+      adSize: BannerAdSize.ADAPTIVE_BANNER,
+      position: BannerAdPosition.BOTTOM_CENTER,
+      margin: 0,
+      isTesting: POCKETRULE_ADMOB_TESTING,
+    });
+  } catch (error) {
+    console.error("PocketRule banner failed to show:", error);
+  }
+}
+
+async function hidePocketRuleBanner() {
+  if (!isNativeApp()) return;
+  try {
+    await AdMob.hideBanner();
+  } catch (error) {
+    console.warn("PocketRule banner hide failed:", error);
+  }
+}
 
 const POCKETRULE_REMINDER_TITLE = "Money Reminder";
 const POCKETRULE_REMINDER_BODY = "You’re expecting money today. Open PocketRule and decide where it goes.";
@@ -153,25 +287,31 @@ async function ensureExactNotificationAccess({ openSettings = false } = {}) {
 
   try {
     if (typeof LocalNotifications.checkExactNotificationSetting !== "function") {
-      // Older plugin versions do not expose the exact-alarm API. Do not block
-      // normal notification scheduling on those versions.
-      return "granted";
+      // Older plugin versions do not expose exact-alarm access. Normal
+      // notification scheduling is still allowed.
+      return "unknown";
     }
 
     const current = await LocalNotifications.checkExactNotificationSetting();
     if (current?.exact_alarm === "granted") return "granted";
 
-    // Only open Android's Alarms & reminders screen after the user explicitly
-    // asks to enable reminders. Never launch Settings on app startup.
+    // Exact alarms improve timing, but they must never be allowed to make the
+    // reminder feature completely fail. If the user explicitly enabled the
+    // reminder, offer Android's setting screen once, then continue and allow
+    // the scheduler to use its non-exact path when exact access is unavailable.
     if (openSettings && typeof LocalNotifications.changeExactNotificationSetting === "function") {
-      const changed = await LocalNotifications.changeExactNotificationSetting();
-      return changed?.exact_alarm === "granted" ? "granted" : "denied";
+      try {
+        const changed = await LocalNotifications.changeExactNotificationSetting();
+        return changed?.exact_alarm === "granted" ? "granted" : "denied";
+      } catch (error) {
+        console.warn("PocketRule exact-alarm settings could not be opened:", error);
+      }
     }
 
     return "denied";
   } catch (error) {
-    console.error("PocketRule exact-alarm check failed:", error);
-    return "denied";
+    console.warn("PocketRule exact-alarm check failed; using non-exact scheduling:", error);
+    return "unknown";
   }
 }
 
@@ -189,12 +329,52 @@ function buildOneTimeReminderDate(reminder) {
   if (!dateValue) return null;
   const [year, month, day] = dateValue.split("-").map(Number);
   const date = new Date(year, month - 1, day, reminder24Hour(reminder), 0, 0, 0);
-  return Number.isNaN(date.getTime()) ? null : date;
+  if (Number.isNaN(date.getTime())) return null;
+
+  // JavaScript normalizes invalid dates (for example, February 31) into a
+  // different month. Reject those values instead of silently moving the
+  // reminder to the wrong day.
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    return null;
+  }
+
+  return date;
 }
 
 async function cancelPocketRuleReminder() {
   if (!isNativeApp()) return;
-  try { await LocalNotifications.cancel({ notifications: [{ id: POCKETRULE_REMINDER_ID }] }); } catch {}
+  try {
+    await LocalNotifications.cancel({
+      notifications: POCKETRULE_REMINDER_IDS.map((id) => ({ id })),
+    });
+  } catch (error) {
+    console.warn("PocketRule reminder cancellation failed:", error);
+  }
+}
+
+function lastDayOfMonth(year, monthIndex) {
+  return new Date(year, monthIndex + 1, 0).getDate();
+}
+
+function buildMonthlyReminderDates(reminder, count = POCKETRULE_MONTHLY_REMINDER_COUNT) {
+  const requestedDay = Math.min(31, Math.max(1, Number(reminder?.dayOfMonth) || 1));
+  const hour = reminder24Hour(reminder);
+  const now = new Date();
+  const dates = [];
+
+  // Build one-time notifications for the next 12 occurrences. This makes
+  // days such as the 29th, 30th and 31st work correctly in shorter months.
+  for (let offset = 0; dates.length < count && offset < count + 2; offset += 1) {
+    const monthDate = new Date(now.getFullYear(), now.getMonth() + offset, 1, hour, 0, 0, 0);
+    const year = monthDate.getFullYear();
+    const month = monthDate.getMonth();
+    const day = Math.min(requestedDay, lastDayOfMonth(year, month));
+    const candidate = new Date(year, month, day, hour, 0, 0, 0);
+
+    if (candidate.getTime() > now.getTime()) dates.push(candidate);
+  }
+
+  return dates;
 }
 
 async function schedulePocketRuleReminder(reminder, { openSettingsIfNeeded = false } = {}) {
@@ -203,10 +383,16 @@ async function schedulePocketRuleReminder(reminder, { openSettingsIfNeeded = fal
     await cancelPocketRuleReminder();
     return { ok: true, reason: "off" };
   }
-  if ((await requestPocketRuleNotifications()) !== "granted") return { ok: false, reason: "permission" };
+  if ((await requestPocketRuleNotifications()) !== "granted") {
+    return { ok: false, reason: "permission" };
+  }
 
-  const exactAccess = await ensureExactNotificationAccess({ openSettings: openSettingsIfNeeded });
-  if (exactAccess !== "granted") return { ok: false, reason: "exact-alarm-permission" };
+  // Exact timing is preferred, but it is not a prerequisite for reminders.
+  // Android can still deliver a normal/inexact scheduled notification.
+  // Exact-alarm access is optional. Local Notifications will fall back to an
+  // inexact alarm when exact access is unavailable. Do not block reminders or
+  // send users into Android Settings just because exact timing is unavailable.
+  const allowWhileIdle = true;
 
   try {
     await LocalNotifications.createChannel({
@@ -215,55 +401,83 @@ async function schedulePocketRuleReminder(reminder, { openSettingsIfNeeded = fal
       description: "Reminders for money you expect to receive.",
       importance: 4,
       visibility: 1,
-      sound: "pocketrule_reminder.wav",
       vibration: true,
     });
+
     await cancelPocketRuleReminder();
 
-    let schedule;
+    let notifications = [];
+
     if (reminder.frequency === "once") {
       const at = buildOneTimeReminderDate(reminder);
       if (!at || at.getTime() <= Date.now()) return { ok: false, reason: "invalid-date" };
-      schedule = { at, allowWhileIdle: true };
-    } else if (reminder.frequency === "daily") {
-      schedule = { on: { hour: reminder24Hour(reminder), minute: 0 }, allowWhileIdle: true };
-    } else if (reminder.frequency === "weekly") {
-      const weekday = { Sunday:1, Monday:2, Tuesday:3, Wednesday:4, Thursday:5, Friday:6, Saturday:7 };
-      schedule = { on: { weekday: weekday[String(reminder.day)] || 1, hour: reminder24Hour(reminder), minute: 0 }, allowWhileIdle: true };
-    } else if (reminder.frequency === "monthly") {
-      schedule = { on: { day: Math.min(31, Math.max(1, Number(reminder.dayOfMonth) || 1)), hour: reminder24Hour(reminder), minute: 0 }, allowWhileIdle: true };
-    } else {
-      return { ok: false, reason: "unsupported-frequency" };
-    }
-
-    const result = await LocalNotifications.schedule({
-      notifications: [{
+      notifications = [{
         id: POCKETRULE_REMINDER_ID,
         title: POCKETRULE_REMINDER_TITLE,
         body: POCKETRULE_REMINDER_BODY,
         channelId: POCKETRULE_NOTIFICATION_CHANNEL,
-        schedule,
+        schedule: { at, allowWhileIdle },
         autoCancel: true,
-        sound: "pocketrule_reminder.wav",
-        extra: { pocketrule: "money-reminder" },
-      }],
-    });
-
-    const scheduled = result?.notifications?.length > 0;
-
-    if (!scheduled) {
-      return { ok: false, reason: "not-scheduled" };
+          extra: { pocketrule: "money-reminder" },
+      }];
+    } else if (reminder.frequency === "daily") {
+      notifications = [{
+        id: POCKETRULE_REMINDER_ID,
+        title: POCKETRULE_REMINDER_TITLE,
+        body: POCKETRULE_REMINDER_BODY,
+        channelId: POCKETRULE_NOTIFICATION_CHANNEL,
+        schedule: { on: { hour: reminder24Hour(reminder), minute: 0 }, allowWhileIdle },
+        autoCancel: true,
+          extra: { pocketrule: "money-reminder" },
+      }];
+    } else if (reminder.frequency === "weekly") {
+      const weekday = { Sunday: 1, Monday: 2, Tuesday: 3, Wednesday: 4, Thursday: 5, Friday: 6, Saturday: 7 };
+      notifications = [{
+        id: POCKETRULE_REMINDER_ID,
+        title: POCKETRULE_REMINDER_TITLE,
+        body: POCKETRULE_REMINDER_BODY,
+        channelId: POCKETRULE_NOTIFICATION_CHANNEL,
+        schedule: {
+          on: {
+            weekday: weekday[String(reminder.day)] || 1,
+            hour: reminder24Hour(reminder),
+            minute: 0,
+          },
+          allowWhileIdle,
+        },
+        autoCancel: true,
+          extra: { pocketrule: "money-reminder" },
+      }];
+    } else if (reminder.frequency === "monthly") {
+      const dates = buildMonthlyReminderDates(reminder);
+      if (!dates.length) return { ok: false, reason: "invalid-date" };
+      notifications = dates.map((at, index) => ({
+        id: POCKETRULE_MONTHLY_REMINDER_BASE_ID + index,
+        title: POCKETRULE_REMINDER_TITLE,
+        body: POCKETRULE_REMINDER_BODY,
+        channelId: POCKETRULE_NOTIFICATION_CHANNEL,
+        schedule: { at, allowWhileIdle },
+        autoCancel: true,
+          extra: { pocketrule: "money-reminder", monthly: true },
+      }));
+    } else {
+      return { ok: false, reason: "unsupported-frequency" };
     }
 
-    // Verify that Android actually has the reminder pending.
+    const result = await LocalNotifications.schedule({ notifications });
+    const scheduledIds = new Set((result?.notifications || []).map((notification) => notification.id));
+    if (!scheduledIds.size) return { ok: false, reason: "not-scheduled" };
+
+    // Verify that Android actually retained at least one pending reminder.
     try {
       const pending = await LocalNotifications.getPending();
-      const exists = pending?.notifications?.some(
-        (notification) => notification.id === POCKETRULE_REMINDER_ID
-      );
+      const pendingIds = new Set((pending?.notifications || []).map((notification) => notification.id));
+      const expectedIds = notifications.map((notification) => notification.id);
+      const exists = expectedIds.some((id) => pendingIds.has(id));
       if (!exists) return { ok: false, reason: "not-pending" };
-    } catch {
+    } catch (error) {
       // Scheduling already succeeded; verification is best-effort.
+      console.warn("PocketRule pending-reminder verification failed:", error);
     }
 
     return { ok: true, reason: "scheduled" };
@@ -296,7 +510,7 @@ function firePocketRuleReminder() {
   try { new Notification(POCKETRULE_REMINDER_TITLE, { body: POCKETRULE_REMINDER_BODY, tag: "pocketrule-reminder" }); } catch {}
 }
 
-const APP_VERSION = "1.18.0";
+const APP_VERSION = "1.18.18";
 const STORAGE_KEY = "pocketrule-state-v1";
 const ENCRYPTED_STORAGE_KEY = "pocketrule-state-v1-encrypted";
 const SECURITY_META_KEY = "pocketrule-security-meta-v1";
@@ -646,7 +860,7 @@ function normalizeSettings(rawSettings, baseSettings) {
   const rawPin = s.pin;
   let pin = null;
 
-  if (typeof rawPin === "string" && /^\\d{4}$/.test(rawPin)) {
+  if (typeof rawPin === "string" && /^\d{4}$/.test(rawPin)) {
     pin = rawPin;
   } else if (
     rawPin &&
@@ -737,7 +951,9 @@ function normalizeState(raw) {
         categories: Array.isArray(r.categories) && r.categories.length
           ? r.categories
               .filter((c) => c && typeof c === "object" && !Array.isArray(c))
-              .map((c) => ({
+              .map((c, categoryIndex) => ({
+                ...c,
+                id: String(c.id || uid(`c${categoryIndex}`)),
                 name: String(c.name || "Category"),
                 pct: Number.isFinite(Number(c.pct)) ? Number(c.pct) : 0,
               }))
@@ -808,7 +1024,30 @@ function normalizeState(raw) {
         }))
     : [];
 
-  const reconciledPlans = plans.map((p) => {
+  // Permanently repair legacy plans whose categories accidentally shared an ID.
+  // The old ID generator used a timestamp plus only 1,000 possible random values,
+  // so two categories created together could collide and share spending. Keep the
+  // first occurrence's ID (and therefore its existing transactions) and assign a
+  // fresh unique ID to every later duplicate. New IDs use uid(), which is UUID-based.
+  const repairedPlans = plans.map((p) => {
+    const seen = new Set();
+    const categories = (p.categories || []).map((c) => {
+      let id = String(c.id || uid("pc"));
+      if (seen.has(id)) {
+        const original = id;
+        do { id = uid("pc"); } while (seen.has(id));
+        return { ...c, id, _repairedFromDuplicateId: original };
+      }
+      seen.add(id);
+      return { ...c, id };
+    });
+    return { ...p, categories };
+  }).map(({ categories, ...p }) => ({
+    ...p,
+    categories: categories.map(({ _repairedFromDuplicateId, ...c }) => c),
+  }));
+
+  const reconciledPlans = repairedPlans.map((p) => {
     const hasTransactions = Array.isArray(p.transactions) && p.transactions.length > 0;
     return reconcilePlanSpending(
       { ...p, hasTransactionLedger: p.hasTransactionLedger || hasTransactions },
@@ -911,7 +1150,15 @@ function formatMoney(n, code) {
 }
 
 function uid(prefix) {
-  return prefix + "-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return `${prefix}-${crypto.randomUUID()}`;
+    }
+  } catch {}
+  const random = typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function"
+    ? Array.from(crypto.getRandomValues(new Uint32Array(2))).map((n) => n.toString(36)).join("")
+    : `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+  return `${prefix}-${Date.now().toString(36)}-${random}`;
 }
 
 function ruleSignature(rule, income) {
@@ -1232,21 +1479,22 @@ const stepperBtn = {
    PIN PAD (used for setup + unlock)
 --------------------------------------------------------- */
 function PinPad({ value, onDigit, onDelete, dark, shake }) {
-  // The PIN keypad intentionally stays light in both app themes for a stable,
-  // familiar authentication surface and maximum digit contrast.
   const keys = ["1","2","3","4","5","6","7","8","9","","0","del"];
-  const pinInk = "#12181B";
-  const pinLine = "#DDE3DE";
-  const pinBg = "#F5F7F3";
+  const pinInk = dark ? "#F4F7F2" : "#12181B";
+  const pinLine = dark ? "#314137" : "#DDE3DE";
+  const pinBg = dark ? "#17221C" : "#F5F7F3";
+  const pinCardBg = dark ? "#111A15" : "#FFFFFF";
+  const pinShadow = dark ? "0 8px 24px rgba(0,0,0,0.28)" : "0 8px 24px rgba(18,24,27,0.10)";
+  const pinThemeClass = dark ? "pr-pin-pad-dark" : "pr-pin-pad-light";
   return (
-    <div className={shake ? "pr-shake" : undefined} style={{ width: "100%", background: "#FFFFFF", border: `1px solid ${pinLine}`, borderRadius: 22, padding: "16px 12px 12px", boxShadow: "0 8px 24px rgba(18,24,27,0.10)" }}>
+    <div className={`${shake ? "pr-pin-pad pr-shake" : "pr-pin-pad"} ${pinThemeClass}`} style={{ width: "100%", borderRadius: 22, padding: "16px 12px 12px", boxShadow: pinShadow }}>
       <div style={{ display: "flex", justifyContent: "center", gap: 12, marginBottom: 26 }}>
         {[0,1,2,3].map((i) => (
           <div key={i} style={{
             width: 13, height: 13, borderRadius: "50%",
-            border: `2px solid ${value.length > i ? pinInk : "rgba(18,24,27,0.22)"}`,
-            background: value.length > i ? pinInk : "transparent",
-            boxShadow: value.length > i ? "0 0 8px rgba(18,24,27,0.12)" : "none",
+            border: `2px solid ${value.length > i ? "currentColor" : "var(--pr-pin-dot-empty)"}`,
+            background: value.length > i ? "currentColor" : "transparent",
+            boxShadow: value.length > i ? "0 0 8px var(--pr-pin-dot-glow)" : "none",
             transition: "all 150ms ease",
           }} />
         ))}
@@ -1261,10 +1509,10 @@ function PinPad({ value, onDigit, onDelete, dark, shake }) {
               onClick={() => (k === "del" ? onDelete() : onDigit(k))}
               style={{
                 width: "100%", height: 66, borderRadius: 15,
-                border: `1px solid ${pinLine}`,
-                background: pinBg,
-                boxShadow: "0 2px 8px rgba(18,24,27,0.08)",
-                color: pinInk,
+                border: "1px solid var(--pr-pin-line)",
+                background: "var(--pr-pin-key-bg)",
+                boxShadow: "var(--pr-pin-key-shadow)",
+                color: "var(--pr-pin-ink)",
                 fontFamily: '"Roboto", sans-serif', fontSize: k === "del" ? 20 : 28,
                 fontWeight: 700, fontVariantNumeric: "tabular-nums", fontFeatureSettings: '"tnum" 1', letterSpacing: k === "0" ? "0.04em" : "0",
                 display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
@@ -1306,8 +1554,8 @@ function LockScreen({ pin, onUnlock, onForgot, dark }) {
   }
 
   return (
-    <div style={{ minHeight: "100%", width: "100%", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", padding: "28px 18px", background: dark ? "#0A100D" : "#F5F6F0" }}>
-      <div style={{ width: "100%", maxWidth: 560, boxSizing: "border-box", background: dark ? "#182019" : "#FFFFFF", border: `1px solid ${dark ? "#2B342E" : "#E7E9E1"}`, borderRadius: 30, padding: "34px 28px 28px", boxShadow: "0 24px 60px rgba(0,0,0,0.28)", textAlign: "center" }}>
+    <div className="pr-lock-screen" style={{ minHeight: "100%", height: "100%", width: "100%", boxSizing: "border-box", display: "flex", alignItems: "stretch", justifyContent: "center", padding: "max(18px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left))", background: dark ? "#0A100D" : "#F5F6F0" }}>
+      <div className="pr-lock-card" style={{ width: "100%", maxWidth: "none", minHeight: "100%", boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "center", background: dark ? "#182019" : "#FFFFFF", border: `1px solid ${dark ? "#2B342E" : "#E7E9E1"}`, borderRadius: 0, padding: "28px 18px", boxShadow: "none", textAlign: "center" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 10 }}>
           <LogoMark size={48} />
           <div style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 27, letterSpacing: "-0.8px", color: dark ? "#F1F4F0" : "#12181B", lineHeight: 1 }}>
@@ -1564,7 +1812,7 @@ function AddMoneySheet({ open, onClose, onConfirm, currency, plan }) {
             onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))}
             placeholder="0"
             aria-label="Additional amount"
-            style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", color: INK, fontFamily: "Roboto, sans-serif", fontWeight: 800, fontSize: 27 }}
+            className="pr-amount-input" style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", color: INK, fontFamily: "Roboto, sans-serif", fontWeight: 800, fontSize: 31 }}
           />
         </div>
 
@@ -1626,13 +1874,11 @@ function PlanTracker({ plan, currency, onAddExpense, onEditExpense, onDeleteExpe
             <p style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 21, color: "#fff", margin: "5px 0 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{plan.name || "Current plan"}</p>
             <p style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: "rgba(255,255,255,0.76)", margin: "4px 0 0" }}>{new Date(plan.date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</p>
           </div>
-          <div style={{ width: 42, height: 42, borderRadius: 13, background: "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <Calendar size={22} color="#fff" strokeWidth={2.1} />
-          </div>
+
         </div>
 
         <div style={{ textAlign: "center", marginTop: 22 }}>
-          <p className="pr-money" style={{ fontFamily: "Roboto, sans-serif", fontWeight: 800, fontSize: 34, letterSpacing: "-0.045em", margin: 0, color: "#fff" }}>{formatMoney(totalRemaining, currency)}</p>
+          <p className="pr-money pr-hero-remaining" style={{ fontFamily: "Roboto, sans-serif", fontWeight: 800, fontSize: 44, letterSpacing: "-0.045em", margin: 0, color: "#fff" }}>{formatMoney(totalRemaining, currency)}</p>
           <p style={{ fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 800, margin: "4px 0 0", color: "rgba(255,255,255,0.86)", textTransform: "uppercase", letterSpacing: .8 }}>Remaining</p>
         </div>
 
@@ -1954,7 +2200,7 @@ function SpendSheet({ category, currency, transactions = [], onClose, onAdd, onE
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 7, borderBottom: "1px dashed rgba(255,255,255,0.45)", paddingBottom: 6, marginTop: 4 }}>
             <span style={{ fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 25 }}>{currencySymbol(currency)}</span>
-            <input autoFocus inputMode="numeric" value={amount ? Number(String(amount).replace(/[^0-9]/g, "")).toLocaleString("en-US") : ""} onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))} placeholder="0" style={{ width: "100%", border: "none", outline: "none", background: "transparent", color: "#fff", fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 27 }} />
+            <input autoFocus inputMode="numeric" value={amount ? Number(String(amount).replace(/[^0-9]/g, "")).toLocaleString("en-US") : ""} onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))} placeholder="0" style={{ width: "100%", border: "none", outline: "none", background: "transparent", color: "#fff", fontFamily: "Sora, sans-serif", fontWeight: 800, fontSize: 31, lineHeight: 1.05 }} />
           </div>
         </div>
 
@@ -2719,7 +2965,7 @@ function RuleEditor({ initial, onCancel, onSave, firstRun }) {
           <PrimaryButton
             icon={Check}
             disabled={total !== 100 || !name.trim() || hasDuplicateNames}
-            onClick={() => onSave({ id: initial.id, name: name.trim(), emoji, categories: categories.map(({ name, pct }) => ({ name: name.trim().replace(/\s+/g, " "), pct: Number(pct) || 0 })) })}
+            onClick={() => onSave({ id: initial.id, name: name.trim(), emoji, categories: categories.map(({ id, name, pct }) => ({ id, name: name.trim().replace(/\s+/g, " "), pct: Number(pct) || 0 })) })}
           >
             {firstRun ? "Save & Continue" : "Save Rule"}
           </PrimaryButton>
@@ -3261,7 +3507,7 @@ function ReminderPicker({ reminder, setReminder }) {
   );
 }
 
-function SettingsScreen({ settings, onChange, onPinCreated, onLockNow, onReset, onAddCurrency, onExportBackup, onImportBackup, onRequestCurrencyChange, isDark }) {
+function SettingsScreen({ settings, onChange, onPinCreated, onDisablePin, onLockNow, onReset, onAddCurrency, onExportBackup, onImportBackup, onRequestCurrencyChange, isDark }) {
   const [pinStep, setPinStep] = useState(null);
   const [reminderError, setReminderError] = useState("");
   const [firstPin, setFirstPin] = useState("");
@@ -3439,7 +3685,13 @@ function SettingsScreen({ settings, onChange, onPinCreated, onLockNow, onReset, 
                 </div>
                 <Switch
                   on={!!settings.pin}
-                  onToggle={() => (settings.pin ? onChange({ ...settings, pin: null }) : startPinSetup())}
+                  onToggle={async () => {
+                    if (settings.pin) {
+                      await onDisablePin?.();
+                    } else {
+                      startPinSetup();
+                    }
+                  }}
                 />
               </div>
 
@@ -3511,6 +3763,7 @@ function SettingsScreen({ settings, onChange, onPinCreated, onLockNow, onReset, 
                 "3. Reminders — If you enable plan reminders, the app may request notification permission from your device. Reminder settings are stored with your app settings.",
                 "4. Sharing — PocketRule does not automatically publish your plans. When you choose Share, the app uses your device's share sheet so you choose the destination.",
                 "5. Backups — Exported backup files may contain your rules, plans, history, and settings. Treat backup files as private financial records and store them securely.",
+                "6. Third-party services and advertising — PocketRule uses Google AdMob to display ads in eligible areas of the app. Google may process device and advertising information as described in Google's applicable privacy documentation. PocketRule uses the Google User Messaging Platform (UMP) consent flow where required. Ads are not shown during onboarding or critical money-entry flows.",
                 "7. Security — No digital storage method can be guaranteed to be perfectly secure. Use a device lock and PocketRule PIN when appropriate, and do not share backup files casually.",
                 "8. Deletion — You can reset PocketRule from Settings to remove the app's locally stored data. Separately exported backup files must be deleted from the location where you saved them.",
                 "9. Changes — We may update this policy as PocketRule evolves. The updated date will be shown here.",
@@ -3877,17 +4130,17 @@ function BottomNav({ active, onNav }) {
     { id: "settings", label: "Settings", icon: SettingsIcon },
   ];
   return (
-    <div style={{ display: "flex", borderTop: `1px solid ${LINE}`, background: PAPER_DIM, paddingTop: 5, boxShadow: "0 -8px 20px -14px rgba(18,24,27,0.15)" }}>
+    <div className="pr-bottom-nav" style={{ display: "flex", borderTop: `1px solid ${LINE}`, background: PAPER_DIM, paddingTop: 4, paddingBottom: "max(3px, env(safe-area-inset-bottom))", boxShadow: "0 -8px 20px -14px rgba(18,24,27,0.15)" }}>
       {items.map((it) => {
         const Icon = it.icon;
         const isActive = active === it.id;
         return (
-          <button key={it.id} onClick={() => onNav(it.id)} style={{ flex: 1, background: "none", border: "none", padding: "6px 0 10px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "pointer", color: isActive ? GOLD : NAV_MUTED }}>
+          <button key={it.id} onClick={() => onNav(it.id)} style={{ flex: 1, background: "none", border: "none", padding: "4px 0 5px", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, cursor: "pointer", color: isActive ? GOLD : NAV_MUTED }}>
             <div style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", color: isActive ? GOLD : NAV_MUTED }}>
               <Icon size={19} strokeWidth={isActive ? 2.5 : 2.0} />
               {isActive && <span style={{ position: "absolute", bottom: -2, width: 18, height: 3, borderRadius: 99, background: GOLD }} />}
             </div>
-            <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: isActive ? 800 : 600 }}>{it.label}</span>
+            <span className="pr-nav-label" style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, lineHeight: 1.15, fontWeight: isActive ? 800 : 600 }}>{it.label}</span>
           </button>
         );
       })}
@@ -4343,6 +4596,7 @@ class PocketRuleErrorBoundary extends Component {
 function PocketRuleAppInner() {
   const [loaded, setLoaded] = useState(false);
   const [sessionPin, setSessionPin] = useState(null);
+  const storageGenerationRef = useRef(0);
   const lastActivityRef = useRef(Date.now());
   const [data, setData] = useState(defaultState());
   // onboarded now lives in persisted `data.onboarded`
@@ -4379,8 +4633,30 @@ function PocketRuleAppInner() {
     };
 
     if (isNativeApp()) {
-      schedulePocketRuleReminder(data.settings.notificationsEnabled ? reminder : { frequency: "off" });
-      return undefined;
+      let cancelled = false;
+      const rescheduleNativeReminder = async () => {
+        if (cancelled) return;
+        const result = await schedulePocketRuleReminder(
+          data.settings.notificationsEnabled ? reminder : { frequency: "off" },
+          { openSettingsIfNeeded: false },
+        );
+        if (!result.ok && result.reason !== "off" && !cancelled) {
+          console.warn("PocketRule reminder was not scheduled:", result.reason);
+        }
+      };
+
+      // Android can delete exact alarms when the user changes Alarms & reminders
+      // access. Reconcile the saved reminder whenever the app becomes visible.
+      rescheduleNativeReminder();
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === "visible") rescheduleNativeReminder();
+      };
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+
+      return () => {
+        cancelled = true;
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      };
     }
 
     if (!data.settings.notificationsEnabled) return undefined;
@@ -4413,28 +4689,54 @@ function PocketRuleAppInner() {
     return () => { if (mq.removeEventListener) mq.removeEventListener("change", handler); else mq.removeListener(handler); };
   }, [data.settings.appearance]);
 
+  useEffect(() => {
+    if (!loaded || !isNativeApp()) return;
+
+    startPocketRuleAdMob().catch((error) => {
+      console.error("PocketRule AdMob startup failed:", error);
+    });
+  }, [loaded]);
+
+  useEffect(() => {
+    if (!loaded || !isNativeApp()) return;
+    if (data.onboarded && screen === "resources") {
+      showPocketRuleBanner();
+    } else {
+      hidePocketRuleBanner();
+    }
+    return () => { hidePocketRuleBanner(); };
+  }, [loaded, data.onboarded, screen]);
 
   useEffect(() => {
     (async () => {
       try {
         const encrypted = await storageAdapter.get(ENCRYPTED_STORAGE_KEY);
-        if (encrypted) {
-          const metaRaw = await storageAdapter.get(SECURITY_META_KEY);
-          const meta = metaRaw ? JSON.parse(metaRaw) : null;
-          if (meta?.pin) setData((d) => ({ ...d, settings: { ...d.settings, pin: meta.pin } }));
+        const metaRaw = await storageAdapter.get(SECURITY_META_KEY);
+        const meta = metaRaw ? JSON.parse(metaRaw) : null;
+
+        // An encrypted payload is authoritative only when it has a valid PIN
+        // verifier. Older builds could leave an encrypted payload behind after
+        // PIN removal; that stale payload must never force a lock screen.
+        if (encrypted && meta?.pin) {
+          setData((d) => ({ ...d, settings: { ...d.settings, pin: meta.pin } }));
           setIsLocked(true);
+        } else if (encrypted || metaRaw) {
+          await storageAdapter.remove(ENCRYPTED_STORAGE_KEY);
+          await storageAdapter.remove(SECURITY_META_KEY);
         }
-        const raw = await storageAdapter.get(STORAGE_KEY);
-        if (raw) {
-          const parsed = normalizeState(JSON.parse(raw));
-          parsed.settings.customCurrencies.forEach(registerCustomCurrency);
-          setData(parsed);
-          setIncome(parsed.lastIncome || "");
-          // Plan names belong to each plan, not to the global app draft.
-          // Start a fresh name field so a previous plan name is never reused accidentally.
-          setPlanName("");
-          setNotes(parsed.notes || "");
-          if (parsed.settings.pin) setIsLocked(true);
+
+        // Only load the plaintext copy when no active encrypted PIN store exists.
+        if (!(encrypted && meta?.pin)) {
+          const raw = await storageAdapter.get(STORAGE_KEY);
+          if (raw) {
+            const parsed = normalizeState(JSON.parse(raw));
+            parsed.settings.customCurrencies.forEach(registerCustomCurrency);
+            setData(parsed);
+            setIncome(parsed.lastIncome || "");
+            setPlanName("");
+            setNotes(parsed.notes || "");
+            setIsLocked(Boolean(parsed.settings.pin));
+          }
         }
       } catch {
       } finally {
@@ -4445,11 +4747,20 @@ function PocketRuleAppInner() {
 
   useEffect(() => {
     if (!loaded) return;
+    const generation = storageGenerationRef.current;
     (async () => {
       if (sessionPin) {
         const encrypted = await encryptJson(data, sessionPin);
-        if (encrypted) { await storageAdapter.set(ENCRYPTED_STORAGE_KEY, encrypted); await storageAdapter.set(SECURITY_META_KEY, JSON.stringify({ pin: data.settings.pin })); await storageAdapter.remove(STORAGE_KEY); }
+        // Do not let an in-flight encrypted write resurrect PIN storage after
+        // the user has disabled the PIN.
+        if (generation !== storageGenerationRef.current) return;
+        if (encrypted) {
+          await storageAdapter.set(ENCRYPTED_STORAGE_KEY, encrypted);
+          await storageAdapter.set(SECURITY_META_KEY, JSON.stringify({ pin: data.settings.pin }));
+          await storageAdapter.remove(STORAGE_KEY);
+        }
       } else if (!data.settings.pin) {
+        if (generation !== storageGenerationRef.current) return;
         await storageAdapter.set(STORAGE_KEY, JSON.stringify(data));
       }
     })();
@@ -4487,12 +4798,99 @@ function PocketRuleAppInner() {
     updateSettings({ ...data.settings, currency: pendingCurrency });
     setPendingCurrency(null);
   }
+  function normalizeCategoryNameForMatch(name) {
+    return String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
+  }
+
   function saveRule(rule) {
     setData((d) => {
       if (rule.id) {
-        return { ...d, rules: d.rules.map((r) => (r.id === rule.id ? { ...r, ...rule } : r)) };
+        const currentRule = d.rules.find((r) => String(r.id) === String(rule.id));
+        if (!currentRule) return d;
+
+        // Preserve stable category IDs across rule edits. This is critical because
+        // plan transactions point to plan-category IDs. A rule edit must update
+        // the existing plan rather than silently creating a second plan/ledger.
+        const incomingCategories = Array.isArray(rule.categories) ? rule.categories : [];
+        const currentCategories = Array.isArray(currentRule.categories) ? currentRule.categories : [];
+        const usedCategoryIds = new Set();
+        const categories = incomingCategories.map((c, index) => {
+          const incomingId = String(c?.id || "");
+          const incomingName = normalizeCategoryNameForMatch(c?.name);
+          const byId = incomingId ? currentCategories.find((x) => String(x?.id || "") === incomingId) : null;
+          const byName = currentCategories.find((x) => normalizeCategoryNameForMatch(x?.name) === incomingName);
+          let id = String(byId?.id || byName?.id || incomingId || uid("c"));
+          if (usedCategoryIds.has(id)) id = uid("c");
+          usedCategoryIds.add(id);
+          return { ...c, id, name: String(c?.name || "").trim().replace(/\s+/g, " "), pct: Number(c?.pct) || 0 };
+        });
+
+        const updatedRule = { ...currentRule, ...rule, id: currentRule.id, categories };
+        let plans = Array.isArray(d.plans) ? d.plans : [];
+        let history = Array.isArray(d.history) ? d.history : [];
+
+        // If this rule is the rule behind the current active plan, edit that plan
+        // in place. Never create a new plan just because the rule was edited.
+        const activePlan = d.activePlanId
+          ? plans.find((p) => String(p.id) === String(d.activePlanId) && p.status === "active" && String(p.ruleId) === String(rule.id))
+          : null;
+
+        if (activePlan) {
+          const oldCategories = Array.isArray(activePlan.categories) ? activePlan.categories : [];
+          const byPlanId = new Map(oldCategories.map((c) => [String(c.id), c]));
+          const byPlanName = new Map(oldCategories.map((c) => [normalizeCategoryNameForMatch(c.name), c]));
+          const allocated = calculateCategories(activePlan.income, categories);
+          const planCategories = allocated.map((a) => {
+            const source = byPlanId.get(String(a.c?.id || "")) || byPlanName.get(normalizeCategoryNameForMatch(a.c?.name));
+            return {
+              id: String(source?.id || uid("pc")),
+              name: a.c.name,
+              pct: a.c.pct,
+              budget: a.amount,
+              spent: Math.max(0, Number(source?.spent) || 0),
+            };
+          });
+
+          const updatedPlan = reconcilePlanSpending({
+            ...activePlan,
+            ruleId: updatedRule.id,
+            ruleName: updatedRule.name,
+            categories: planCategories,
+          }, true);
+
+          plans = plans.map((p) => p.id === activePlan.id ? updatedPlan : p);
+          history = history.map((h) => {
+            if (String(h.planId) !== String(activePlan.id) && String(h.id) !== String(activePlan.historyId || "")) return h;
+            return {
+              ...h,
+              ruleName: updatedRule.name,
+              income: Number(activePlan.income) || 0,
+              categories: updatedRule.categories.map((c) => ({ name: c.name, pct: c.pct })),
+              planId: activePlan.id,
+            };
+          });
+        }
+
+        return {
+          ...d,
+          rules: d.rules.map((r) => (String(r.id) === String(rule.id) ? updatedRule : r)),
+          plans,
+          history,
+        };
       }
-      const newRule = { ...rule, id: uid("rule"), createdAt: Date.now(), lastUsedAt: Date.now() };
+
+      const newRule = {
+        ...rule,
+        id: uid("rule"),
+        createdAt: Date.now(),
+        lastUsedAt: Date.now(),
+        categories: (rule.categories || []).map((c) => ({
+          ...c,
+          id: String(c?.id || uid("c")),
+          name: String(c?.name || "").trim().replace(/\s+/g, " "),
+          pct: Number(c?.pct) || 0,
+        })),
+      };
       return { ...d, rules: [...d.rules, newRule], activeRuleId: newRule.id };
     });
     setEditingRuleId(undefined);
@@ -4876,6 +5274,25 @@ function PocketRuleAppInner() {
     }
   }
 
+  async function disablePinLock() {
+    // Invalidate any encrypted write that may still be in flight.
+    storageGenerationRef.current += 1;
+    setSessionPin(null);
+    setIsLocked(false);
+
+    const nextData = {
+      ...data,
+      settings: { ...data.settings, pin: null },
+    };
+
+    // Remove the encrypted store and its PIN metadata before writing the
+    // plaintext state. This makes PIN removal persistent across app restarts.
+    await storageAdapter.remove(ENCRYPTED_STORAGE_KEY);
+    await storageAdapter.remove(SECURITY_META_KEY);
+    await storageAdapter.set(STORAGE_KEY, JSON.stringify(nextData));
+    setData(nextData);
+  }
+
   function resetApp() {
     setData(defaultState());
     setIncome("");
@@ -4933,12 +5350,25 @@ function PocketRuleAppInner() {
     }));
     const permission = await requestPocketRuleNotifications();
     const granted = permission === "granted";
-    setData((d) => ({ ...d, settings: { ...d.settings, notificationsEnabled: granted } }));
+    let scheduled = true;
+
     if (granted && reminder.frequency !== "off") {
-      await schedulePocketRuleReminder(reminder, { openSettingsIfNeeded: true });
+      const result = await schedulePocketRuleReminder(reminder, { openSettingsIfNeeded: true });
+      scheduled = result.ok;
+      if (!result.ok) {
+        console.error("PocketRule reminder setup failed:", result.reason);
+      }
     } else {
       await cancelPocketRuleReminder();
     }
+
+    setData((d) => ({
+      ...d,
+      settings: {
+        ...d.settings,
+        notificationsEnabled: granted && scheduled,
+      },
+    }));
     setShowReminderPrompt(false);
   }
 
@@ -4991,7 +5421,7 @@ function PocketRuleAppInner() {
   const themeVars = THEME_VARS[isDark ? "dark" : "light"];
 
   return (
-    <div style={{ minHeight: "100vh", background: "#050705", display: "flex", alignItems: "center", justifyContent: "center", padding: "14px 16px", boxSizing: "border-box", ...themeVars }}>
+    <div className="pr-app-shell" style={{ minHeight: "100dvh", background: "#050705", display: "flex", alignItems: "center", justifyContent: "center", padding: "max(0px, env(safe-area-inset-top)) max(0px, env(safe-area-inset-right)) max(0px, env(safe-area-inset-bottom)) max(0px, env(safe-area-inset-left))", boxSizing: "border-box", ...themeVars }}>
     {backupModal && <BackupPasswordSheet mode={backupModal.mode} isDark={isDark} error={backupModal.error} loading={backupModal.loading} onCancel={() => setBackupModal(null)} onConfirm={submitBackupModal} />}
         {backupModal?.pendingRestore && (
           <ConfirmSheet
@@ -5024,11 +5454,7 @@ function PocketRuleAppInner() {
           onEnable={enableReminderFromPrompt}
         />
       <style>{FONTS}</style>
-      <div style={{ width: "min(100%, 780px)", height: "min(780px, calc(100vh - 28px))", minHeight: 0, boxSizing: "border-box", background: PAPER, color: INK, colorScheme: isDark ? "dark" : "light", borderRadius: 34, border: "6px solid #000000", boxShadow: "0 28px 70px rgba(0,0,0,0.52)", overflow: "hidden", display: "flex", flexDirection: "column", position: "relative", ...themeVars }}>
-        <div style={{ height: 24, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <div style={{ width: 90, height: 18, background: "#000000", borderRadius: 10 }} />
-        </div>
-
+      <div className="pr-app-frame" style={{ width: "min(100%, 780px)", height: "min(780px, calc(100dvh - 28px))", minHeight: 0, boxSizing: "border-box", background: PAPER, color: INK, colorScheme: isDark ? "dark" : "light", borderRadius: 34, border: "6px solid #000000", boxShadow: "0 28px 70px rgba(0,0,0,0.52)", overflow: "hidden", display: "flex", flexDirection: "column", position: "relative", ...themeVars }}>
         {loaded && data.onboarded && !isLocked && screen !== "firstRule" && (
           <div style={{ position: "relative", height: 38, padding: "3px 20px 9px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -5141,7 +5567,7 @@ function PocketRuleAppInner() {
               onSave={saveRule}
             />
           ) : screen === "settings" ? (
-            <SettingsScreen settings={data.settings} onChange={updateSettings} onPinCreated={(pin) => setSessionPin(pin)} onLockNow={() => { setSessionPin(null); setIsLocked(true); }} onReset={resetApp} onAddCurrency={addCustomCurrency} onExportBackup={exportBackup} onImportBackup={importBackup} onRequestCurrencyChange={requestCurrencyChange} isDark={isDark} />
+            <SettingsScreen settings={data.settings} onChange={updateSettings} onPinCreated={(pin) => setSessionPin(pin)} onDisablePin={disablePinLock} onLockNow={() => { setSessionPin(null); setIsLocked(true); }} onReset={resetApp} onAddCurrency={addCustomCurrency} onExportBackup={exportBackup} onImportBackup={importBackup} onRequestCurrencyChange={requestCurrencyChange} isDark={isDark} />
           ) : screen === "history" ? (
             <HistoryScreen
               history={data.history}
