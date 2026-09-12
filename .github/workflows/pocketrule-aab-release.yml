@@ -747,8 +747,8 @@ jobs:
           from pathlib import Path
           import re
 
-          VERSION_CODE = 11820
-          VERSION_NAME = "1.18.20"
+          VERSION_CODE = 11821
+          VERSION_NAME = "1.18.21"
 
           path = Path("android/app/build.gradle")
 
@@ -886,8 +886,8 @@ jobs:
           print("================================")
           print("POCKETRULE RELEASE CONFIGURED")
           print("================================")
-          print("Version name: 1.18.20")
-          print("Version code: 11820")
+          print("Version name: 1.18.21")
+          print("Version code: 11821")
           print("compileSdk: 36")
           print("targetSdk: 36")
           print("Release signing: configured")
@@ -922,9 +922,9 @@ jobs:
                   f"Found {len(codes)}."
               )
 
-          if codes[0] != "11820":
+          if codes[0] != "11821":
               raise SystemExit(
-                  f"ERROR: Expected versionCode 11820. "
+                  f"ERROR: Expected versionCode 11821. "
                   f"Found {codes[0]}."
               )
 
@@ -939,9 +939,9 @@ jobs:
                   f"Found {len(names)}."
               )
 
-          if names[0] != "1.18.20":
+          if names[0] != "1.18.21":
               raise SystemExit(
-                  f"ERROR: Expected versionName 1.18.20. "
+                  f"ERROR: Expected versionName 1.18.21. "
                   f"Found {names[0]}."
               )
 
@@ -973,8 +973,8 @@ jobs:
           print("================================")
           print("ANDROID CONFIGURATION VERIFIED")
           print("================================")
-          print("Version name: 1.18.20")
-          print("Version code: 11820")
+          print("Version name: 1.18.21")
+          print("Version code: 11821")
           print("compileSdk: 36")
           print("targetSdk: 36")
           print("Release signing: OK")
@@ -1014,7 +1014,7 @@ jobs:
           set -euo pipefail
 
           SOURCE_AAB="android/app/build/outputs/bundle/release/app-release.aab"
-          RELEASE_AAB="release/PocketRule-v1.18.20-code11820.aab"
+          RELEASE_AAB="release/PocketRule-v1.18.21-code11821.aab"
 
           if [ ! -f "$SOURCE_AAB" ]; then
             echo "ERROR: AAB was not generated."
@@ -1044,7 +1044,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          FILE="release/PocketRule-v1.18.20-code11820.aab"
+          FILE="release/PocketRule-v1.18.21-code11821.aab"
 
           test -f "$FILE"
           test -s "$FILE"
@@ -1073,7 +1073,7 @@ jobs:
             -verify \
             -verbose \
             -certs \
-            release/PocketRule-v1.18.20-code11820.aab
+            release/PocketRule-v1.18.21-code11821.aab
 
           echo "AAB signature verification passed."
 
@@ -1086,8 +1086,8 @@ jobs:
         id: upload_aab
         uses: actions/upload-artifact@v7
         with:
-          name: PocketRule-AAB-v1.18.20-code11820
-          path: release/PocketRule-v1.18.20-code11820.aab
+          name: PocketRule-AAB-v1.18.21-code11821
+          path: release/PocketRule-v1.18.21-code11821.aab
           if-no-files-found: error
           retention-days: 30
 
@@ -1113,9 +1113,9 @@ jobs:
           echo "================================"
           echo "Artifact ID: $ARTIFACT_ID"
           echo "Artifact URL: $ARTIFACT_URL"
-          echo "File: PocketRule-v1.18.20-code11820.aab"
+          echo "File: PocketRule-v1.18.21-code11821.aab"
           echo "Version: 1.18.18"
-          echo "Version code: 11820"
+          echo "Version code: 11821"
           echo "compileSdk: 36"
           echo "targetSdk: 36"
           echo "AD_ID permission: CONFIGURED"
