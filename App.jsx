@@ -126,9 +126,13 @@ const POCKETRULE_REMINDER_IDS = [
   ...Array.from({ length: POCKETRULE_MONTHLY_REMINDER_COUNT }, (_, index) => POCKETRULE_MONTHLY_REMINDER_BASE_ID + index),
 ];
 const POCKETRULE_NOTIFICATION_CHANNEL = "pocketrule-reminders-v2";
-const POCKETRULE_ADMOB_BANNER_ID = import.meta.env.VITE_ADMOB_BANNER_ID || "ca-app-pub-3940256099942544/6300978111";
 const POCKETRULE_ADMOB_TESTING = String(import.meta.env.VITE_ADMOB_TESTING ?? "true").toLowerCase() !== "false";
 const POCKETRULE_ADMOB_ENABLED = String(import.meta.env.VITE_ADMOB_ENABLED ?? "true").toLowerCase() !== "false";
+const POCKETRULE_ADMOB_PRODUCTION_BANNER_ID = import.meta.env.VITE_ADMOB_BANNER_ID || "ca-app-pub-8824720596295442/8498136761";
+const POCKETRULE_ADMOB_TEST_BANNER_ID = "ca-app-pub-3940256099942544/6300978111";
+const POCKETRULE_ADMOB_BANNER_ID = POCKETRULE_ADMOB_TESTING
+  ? POCKETRULE_ADMOB_TEST_BANNER_ID
+  : POCKETRULE_ADMOB_PRODUCTION_BANNER_ID;
 
 let pocketRuleAdMobInitialized = false;
 let pocketRuleAdMobConsentPromise = null;
@@ -179,11 +183,21 @@ async function startPocketRuleAdMob() {
         initializeForTesting: POCKETRULE_ADMOB_TESTING,
       });
       pocketRuleAdMobInitialized = true;
-      console.log("PocketRule AdMob initialized.");
+      console.log("PocketRule AdMob initialized.", {
+        testing: POCKETRULE_ADMOB_TESTING,
+      });
     }
 
     await setupPocketRuleAdMobListeners();
 
+    // Test builds use Google's dedicated test banner and deliberately
+    // skip the consent gate so we can verify the native banner path.
+    if (POCKETRULE_ADMOB_TESTING) {
+      console.log("PocketRule AdMob test mode: consent gate bypassed.");
+      return true;
+    }
+
+    // Production builds still obtain consent before requesting ads.
     if (!pocketRuleAdMobConsentPromise) {
       pocketRuleAdMobConsentPromise = (async () => {
         let consentInfo = await AdMob.requestConsentInfo();
@@ -211,7 +225,7 @@ async function startPocketRuleAdMob() {
 
     return await pocketRuleAdMobConsentPromise;
   } catch (error) {
-    console.error("PocketRule AdMob initialization/consent failed:", error);
+    console.error("PocketRule AdMob initialization failed:", error);
     pocketRuleAdMobConsentPromise = null;
     return false;
   }
@@ -237,7 +251,8 @@ async function showPocketRuleBanner() {
       adId: POCKETRULE_ADMOB_BANNER_ID,
       adSize: BannerAdSize.ADAPTIVE_BANNER,
       position: BannerAdPosition.BOTTOM_CENTER,
-      margin: 0,
+      // Native AdMob is an overlay. Keep it above PocketRule's bottom navigation.
+      margin: 72,
       isTesting: POCKETRULE_ADMOB_TESTING,
     });
   } catch (error) {
@@ -510,7 +525,7 @@ function firePocketRuleReminder() {
   try { new Notification(POCKETRULE_REMINDER_TITLE, { body: POCKETRULE_REMINDER_BODY, tag: "pocketrule-reminder" }); } catch {}
 }
 
-const APP_VERSION = "1.18.21";
+const APP_VERSION = "1.18.22";
 const STORAGE_KEY = "pocketrule-state-v1";
 const ENCRYPTED_STORAGE_KEY = "pocketrule-state-v1-encrypted";
 const SECURITY_META_KEY = "pocketrule-security-meta-v1";
