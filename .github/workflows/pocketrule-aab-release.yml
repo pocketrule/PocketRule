@@ -887,7 +887,7 @@ jobs:
           print("POCKETRULE RELEASE CONFIGURED")
           print("================================")
           print("Version name: 1.18.24")
-          print("Version code: 11822")
+          print("Version code: 11824")
           print("compileSdk: 36")
           print("targetSdk: 36")
           print("Release signing: configured")
@@ -922,7 +922,7 @@ jobs:
                   f"Found {len(codes)}."
               )
 
-          if codes[0] != "11822":
+          if codes[0] != "11824":
               raise SystemExit(
                   f"ERROR: Expected versionCode 11824. "
                   f"Found {codes[0]}."
@@ -974,7 +974,7 @@ jobs:
           print("ANDROID CONFIGURATION VERIFIED")
           print("================================")
           print("Version name: 1.18.24")
-          print("Version code: 11822")
+          print("Version code: 11824")
           print("compileSdk: 36")
           print("targetSdk: 36")
           print("Release signing: OK")
@@ -1115,7 +1115,7 @@ jobs:
           echo "Artifact URL: $ARTIFACT_URL"
           echo "File: PocketRule-v1.18.24-code11824.aab"
           echo "Version: 1.18.18"
-          echo "Version code: 11822"
+          echo "Version code: 11824"
           echo "compileSdk: 36"
           echo "targetSdk: 36"
           echo "AD_ID permission: CONFIGURED"
