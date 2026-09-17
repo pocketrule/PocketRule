@@ -130,7 +130,7 @@ force 15–16px labels into five narrow columns. */
 /* Give the scroll area a small breathing space above the navigation. */
 .pr-app-content {
   min-height: 0;
-  padding-bottom: 12px;
+  padding-bottom: 160px;
   -webkit-overflow-scrolling: touch;
 }
 

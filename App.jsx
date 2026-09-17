@@ -138,14 +138,6 @@ let pocketRuleAdMobInitialized = false;
 let pocketRuleAdMobConsentPromise = null;
 let pocketRuleAdMobListenersReady = false;
 
-function setPocketRuleAdMobDebug(status, detail = "") {
-  try {
-    window.__POCKETRULE_ADMOB_DEBUG__ = { status, detail, at: new Date().toISOString() };
-    window.dispatchEvent(new CustomEvent("pocketrule-admob-debug", { detail: window.__POCKETRULE_ADMOB_DEBUG__ }));
-  } catch {}
-  console.log("PocketRule AdMob DEBUG:", status, detail);
-}
-
 async function setupPocketRuleAdMobListeners() {
   if (!isNativeApp() || pocketRuleAdMobListenersReady) return;
 
@@ -153,38 +145,31 @@ async function setupPocketRuleAdMobListeners() {
 
   try {
     await AdMob.addListener(BannerAdPluginEvents.Loaded, (info) => {
-      setPocketRuleAdMobDebug("LOADED", JSON.stringify(info ?? {}));
       console.log("PocketRule AdMob banner loaded:", info);
     });
 
     await AdMob.addListener(BannerAdPluginEvents.FailedToLoad, (error) => {
-      setPocketRuleAdMobDebug("FAILED_TO_LOAD", JSON.stringify(error ?? {}));
       console.error("PocketRule AdMob banner failed to load:", error);
     });
 
     await AdMob.addListener(BannerAdPluginEvents.Opened, () => {
-      setPocketRuleAdMobDebug("OPENED");
       console.log("PocketRule AdMob banner opened.");
     });
 
     await AdMob.addListener(BannerAdPluginEvents.Closed, () => {
-      setPocketRuleAdMobDebug("CLOSED");
       console.log("PocketRule AdMob banner closed.");
     });
 
     await AdMob.addListener(BannerAdPluginEvents.SizeChanged, (size) => {
-      setPocketRuleAdMobDebug("SIZE_CHANGED", JSON.stringify(size ?? {}));
       console.log("PocketRule AdMob banner size changed:", size);
     });
   } catch (error) {
-    setPocketRuleAdMobDebug("LISTENER_ERROR", String(error));
     console.error("PocketRule AdMob listener setup failed:", error);
   }
 }
 
 async function startPocketRuleAdMob() {
   if (!isNativeApp() || !POCKETRULE_ADMOB_ENABLED) {
-    setPocketRuleAdMobDebug("SKIPPED", `native=${isNativeApp()} enabled=${POCKETRULE_ADMOB_ENABLED}`);
     console.log("PocketRule AdMob skipped:", {
       native: isNativeApp(),
       enabled: POCKETRULE_ADMOB_ENABLED,
@@ -198,7 +183,6 @@ async function startPocketRuleAdMob() {
         initializeForTesting: POCKETRULE_ADMOB_TESTING,
       });
       pocketRuleAdMobInitialized = true;
-      setPocketRuleAdMobDebug("INITIALIZED", `testing=${POCKETRULE_ADMOB_TESTING}`);
       console.log("PocketRule AdMob initialized.", {
         testing: POCKETRULE_ADMOB_TESTING,
       });
@@ -241,7 +225,6 @@ async function startPocketRuleAdMob() {
 
     return await pocketRuleAdMobConsentPromise;
   } catch (error) {
-    setPocketRuleAdMobDebug("INIT_ERROR", String(error));
     console.error("PocketRule AdMob initialization failed:", error);
     pocketRuleAdMobConsentPromise = null;
     return false;
@@ -249,13 +232,11 @@ async function startPocketRuleAdMob() {
 }
 
 async function showPocketRuleBanner() {
-  if (!isNativeApp()) { setPocketRuleAdMobDebug("NOT_NATIVE"); return; }
+  if (!isNativeApp()) return;
 
-  setPocketRuleAdMobDebug("SHOW_REQUESTED", `screen=${window.location.pathname}`);
   const canRequestAds = await startPocketRuleAdMob();
 
   if (!canRequestAds) {
-    setPocketRuleAdMobDebug("CANNOT_REQUEST_ADS");
     console.warn("PocketRule banner not shown because ads cannot be requested.");
     return;
   }
@@ -266,17 +247,15 @@ async function showPocketRuleBanner() {
       isTesting: POCKETRULE_ADMOB_TESTING,
     });
 
-    setPocketRuleAdMobDebug("SHOWING", `adId=${POCKETRULE_ADMOB_BANNER_ID}`);
     await AdMob.showBanner({
       adId: POCKETRULE_ADMOB_BANNER_ID,
       adSize: BannerAdSize.ADAPTIVE_BANNER,
       position: BannerAdPosition.BOTTOM_CENTER,
-      // Native AdMob is an overlay. Keep it above PocketRule's bottom navigation.
-      margin: 72,
+      // Native AdMob is an overlay. Keep it well above PocketRule's bottom navigation and Android system navigation.
+      margin: 150,
       isTesting: POCKETRULE_ADMOB_TESTING,
     });
   } catch (error) {
-    setPocketRuleAdMobDebug("SHOW_ERROR", String(error));
     console.error("PocketRule banner failed to show:", error);
   }
 }
@@ -546,7 +525,7 @@ function firePocketRuleReminder() {
   try { new Notification(POCKETRULE_REMINDER_TITLE, { body: POCKETRULE_REMINDER_BODY, tag: "pocketrule-reminder" }); } catch {}
 }
 
-const APP_VERSION = "1.18.22";
+const APP_VERSION = "1.18.24";
 const STORAGE_KEY = "pocketrule-state-v1";
 const ENCRYPTED_STORAGE_KEY = "pocketrule-state-v1-encrypted";
 const SECURITY_META_KEY = "pocketrule-security-meta-v1";
@@ -5665,29 +5644,6 @@ function PocketRuleAppInner() {
 ); 
 }
 
-function PocketRuleAdMobDebugPanel() {
-  const [debug, setDebug] = useState(() => window.__POCKETRULE_ADMOB_DEBUG__ || { status: "BOOTING", detail: "" });
-  useEffect(() => {
-    const handler = (event) => setDebug(event.detail || {});
-    window.addEventListener("pocketrule-admob-debug", handler);
-    const timer = window.setInterval(() => {
-      if (window.__POCKETRULE_ADMOB_DEBUG__) setDebug(window.__POCKETRULE_ADMOB_DEBUG__);
-    }, 1000);
-    return () => { window.removeEventListener("pocketrule-admob-debug", handler); window.clearInterval(timer); };
-  }, []);
-  const run = async () => {
-    setPocketRuleAdMobDebug("MANUAL_TEST");
-    await showPocketRuleBanner();
-  };
-  return (
-    <div style={{ position: "fixed", left: 8, right: 8, bottom: 76, zIndex: 2147483647, padding: "8px 10px", borderRadius: 10, background: "#fff", color: "#111", border: "2px solid #111", fontSize: 11, fontFamily: "monospace", boxShadow: "0 4px 18px rgba(0,0,0,.25)" }}>
-      <div><b>AdMob TEST:</b> {debug.status}</div>
-      {debug.detail ? <div style={{ marginTop: 3, wordBreak: "break-word" }}>{debug.detail}</div> : null}
-      <button onClick={run} style={{ marginTop: 5, padding: "5px 9px", borderRadius: 7, border: "1px solid #111", background: "#111", color: "#fff", fontWeight: 700 }}>FORCE TEST BANNER</button>
-    </div>
-  );
-}
-
 export default function PocketRuleApp() {
-  return <PocketRuleErrorBoundary><PocketRuleAppInner />{POCKETRULE_ADMOB_TESTING && isNativeApp() ? <PocketRuleAdMobDebugPanel /> : null}</PocketRuleErrorBoundary>;
+  return <PocketRuleErrorBoundary><PocketRuleAppInner /></PocketRuleErrorBoundary>;
 }
