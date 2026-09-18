@@ -114,7 +114,7 @@ jobs:
           VITE_ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
           VITE_ADMOB_BANNER_ID: ${{ secrets.ADMOB_BANNER_AD_UNIT_ID }}
           VITE_ADMOB_ENABLED: "true"
-          VITE_ADMOB_TESTING: "true"
+          VITE_ADMOB_TESTING: "false"
         run: |
           set -euo pipefail
 
@@ -747,8 +747,8 @@ jobs:
           from pathlib import Path
           import re
 
-          VERSION_CODE = 11824
-          VERSION_NAME = "1.18.24"
+          VERSION_CODE = 11825
+          VERSION_NAME = "1.18.25"
 
           path = Path("android/app/build.gradle")
 
@@ -886,8 +886,8 @@ jobs:
           print("================================")
           print("POCKETRULE RELEASE CONFIGURED")
           print("================================")
-          print("Version name: 1.18.24")
-          print("Version code: 11824")
+          print("Version name: 1.18.25")
+          print("Version code: 11822")
           print("compileSdk: 36")
           print("targetSdk: 36")
           print("Release signing: configured")
@@ -922,9 +922,9 @@ jobs:
                   f"Found {len(codes)}."
               )
 
-          if codes[0] != "11824":
+          if codes[0] != "11822":
               raise SystemExit(
-                  f"ERROR: Expected versionCode 11824. "
+                  f"ERROR: Expected versionCode 11825. "
                   f"Found {codes[0]}."
               )
 
@@ -939,9 +939,9 @@ jobs:
                   f"Found {len(names)}."
               )
 
-          if names[0] != "1.18.24":
+          if names[0] != "1.18.25":
               raise SystemExit(
-                  f"ERROR: Expected versionName 1.18.24. "
+                  f"ERROR: Expected versionName 1.18.25. "
                   f"Found {names[0]}."
               )
 
@@ -973,8 +973,8 @@ jobs:
           print("================================")
           print("ANDROID CONFIGURATION VERIFIED")
           print("================================")
-          print("Version name: 1.18.24")
-          print("Version code: 11824")
+          print("Version name: 1.18.25")
+          print("Version code: 11822")
           print("compileSdk: 36")
           print("targetSdk: 36")
           print("Release signing: OK")
@@ -1014,7 +1014,7 @@ jobs:
           set -euo pipefail
 
           SOURCE_AAB="android/app/build/outputs/bundle/release/app-release.aab"
-          RELEASE_AAB="release/PocketRule-v1.18.24-code11824.aab"
+          RELEASE_AAB="release/PocketRule-v1.18.25-code11825.aab"
 
           if [ ! -f "$SOURCE_AAB" ]; then
             echo "ERROR: AAB was not generated."
@@ -1044,7 +1044,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          FILE="release/PocketRule-v1.18.24-code11824.aab"
+          FILE="release/PocketRule-v1.18.25-code11825.aab"
 
           test -f "$FILE"
           test -s "$FILE"
@@ -1073,7 +1073,7 @@ jobs:
             -verify \
             -verbose \
             -certs \
-            release/PocketRule-v1.18.24-code11824.aab
+            release/PocketRule-v1.18.25-code11825.aab
 
           echo "AAB signature verification passed."
 
@@ -1086,8 +1086,8 @@ jobs:
         id: upload_aab
         uses: actions/upload-artifact@v7
         with:
-          name: PocketRule-AAB-v1.18.24-code11824
-          path: release/PocketRule-v1.18.24-code11824.aab
+          name: PocketRule-AAB-v1.18.25-code11825
+          path: release/PocketRule-v1.18.25-code11825.aab
           if-no-files-found: error
           retention-days: 30
 
@@ -1113,9 +1113,9 @@ jobs:
           echo "================================"
           echo "Artifact ID: $ARTIFACT_ID"
           echo "Artifact URL: $ARTIFACT_URL"
-          echo "File: PocketRule-v1.18.24-code11824.aab"
+          echo "File: PocketRule-v1.18.25-code11825.aab"
           echo "Version: 1.18.18"
-          echo "Version code: 11824"
+          echo "Version code: 11822"
           echo "compileSdk: 36"
           echo "targetSdk: 36"
           echo "AD_ID permission: CONFIGURED"
